@@ -245,11 +245,114 @@
     ctx.restore();
   }
 
+  // Dibuja un rectángulo con esquinas redondeadas como PATH actual del contexto
+  // (reutilizable tanto para rellenar como para trazar el contorno).
+  function traceRoundedRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+
+  // Dibuja el circuito: un óvalo con curvas (rectángulo redondeado hueco),
+  // asfalto gris oscuro, pianos rojo/blanco en ambos bordes y línea de meta.
+  function drawTrack() {
+    const w = canvas.width;
+    const h = canvas.height;
+
+    // Trazado exterior del circuito
+    const outerW = w * 0.82;
+    const outerH = h * 0.78;
+    const outerX = (w - outerW) / 2;
+    const outerY = (h - outerH) / 2;
+    const outerR = Math.min(outerW, outerH) * 0.28;
+
+    // Ancho del asfalto (grosor de la pista)
+    const trackWidth = Math.min(outerW, outerH) * 0.22;
+
+    // Trazado interior (el "agujero" del óvalo)
+    const innerW = outerW - trackWidth * 2;
+    const innerH = outerH - trackWidth * 2;
+    const innerX = outerX + trackWidth;
+    const innerY = outerY + trackWidth;
+    const innerR = Math.max(outerR - trackWidth, 10);
+
+    // Asfalto (forma exterior rellena de gris oscuro)
+    traceRoundedRect(outerX, outerY, outerW, outerH, outerR);
+    ctx.fillStyle = '#3d3d3d';
+    ctx.fill();
+
+    // Hueco interior (mismo color que el fondo, deja ver el "óvalo" del circuito)
+    traceRoundedRect(innerX, innerY, innerW, innerH, innerR);
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fill();
+
+    // Pianos rojo/blanco en el borde exterior e interior del asfalto
+    const curbWidth = 10;
+    const dash = 18;
+
+    ctx.save();
+    ctx.lineWidth = curbWidth;
+    ctx.setLineDash([dash, dash]);
+
+    traceRoundedRect(outerX, outerY, outerW, outerH, outerR);
+    ctx.lineDashOffset = 0;
+    ctx.strokeStyle = '#f1f1f1';
+    ctx.stroke();
+    ctx.lineDashOffset = dash;
+    ctx.strokeStyle = '#e63946';
+    ctx.stroke();
+
+    traceRoundedRect(innerX, innerY, innerW, innerH, innerR);
+    ctx.lineDashOffset = 0;
+    ctx.strokeStyle = '#f1f1f1';
+    ctx.stroke();
+    ctx.lineDashOffset = dash;
+    ctx.strokeStyle = '#e63946';
+    ctx.stroke();
+
+    ctx.restore();
+
+    // Línea de meta a cuadros, en la recta inferior del circuito
+    drawFinishLine(outerX, outerY, outerW, outerH, trackWidth);
+  }
+
+  // Dibuja la línea de meta (patrón de cuadros) cruzando la recta inferior
+  function drawFinishLine(outerX, outerY, outerW, outerH, trackWidth) {
+    const lineWidth = 22;
+    const lineHeight = trackWidth;
+    const lineX = outerX + outerW / 2 - lineWidth / 2;
+    const lineY = outerY + outerH - trackWidth;
+
+    const cols = 3;
+    const rows = 8;
+    const cellW = lineWidth / cols;
+    const cellH = lineHeight / rows;
+
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const isBlack = (row + col) % 2 === 0;
+        ctx.fillStyle = isBlack ? '#111111' : '#f5f5f5';
+        ctx.fillRect(lineX + col * cellW, lineY + row * cellH, cellW, cellH);
+      }
+    }
+  }
+
   // Dibuja el fondo oscuro y el coche (rotado según su ángulo)
   function draw() {
     // Fondo oscuro
     ctx.fillStyle = '#1a1a1a';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Circuito (asfalto, pianos y línea de meta)
+    drawTrack();
 
     // Zonas táctiles guía (provisional)
     drawTouchZones();
