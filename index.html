@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Juego de Carreras</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: #111;
+  }
+  canvas {
+    display: block;
+  }
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+
+<script>
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+
+  // Ajustar el canvas al tamaño completo de la ventana
+  function resizeCanvas() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    draw();
+  }
+
+  // Dibuja el fondo oscuro y el coche (rectángulo centrado)
+  function draw() {
+    // Fondo oscuro
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Coche: rectángulo centrado
+    const carWidth = 40;
+    const carHeight = 70;
+    const carX = (canvas.width - carWidth) / 2;
+    const carY = (canvas.height - carHeight) / 2;
+
+    ctx.fillStyle = '#e63946';
+    ctx.fillRect(carX, carY, carWidth, carHeight);
+  }
+
+  window.addEventListener('resize', resizeCanvas);
+
+  // Inicializar
+  resizeCanvas();
+</script>
+</body>
+</html>
