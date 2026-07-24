@@ -27,10 +27,11 @@
   const carWidth = 40;
   const carHeight = 70;
 
-  // Estado del coche
+  // Estado del coche (x,y = centro del coche; angle en radianes, 0 = apuntando hacia arriba)
   const car = {
     x: 0,
     y: 0,
+    angle: 0,
     velocity: 0
   };
 
@@ -39,20 +40,31 @@
   const FRICTION = 0.9;        // al soltar, conserva el 90% (pierde un 10%)
   const MAX_SPEED = 8;         // velocidad máxima
   const MIN_VELOCITY = 0.01;   // umbral para redondear a 0 y evitar decimales infinitos
+  const TURN_SPEED = 0.045;    // radianes que gira el coche por frame
 
-  let accelerating = false;
+  // --- Estado de controles (combinación de teclado + táctil) ---
+  const keyboardState = { up: false, left: false, right: false };
+  const touchState = { accelerate: false, left: false, right: false };
+
+  function isTouchAccelerating() { return touchState.accelerate; }
+  function isTouchTurningLeft() { return touchState.left; }
+  function isTouchTurningRight() { return touchState.right; }
 
   // Ajustar el canvas al tamaño completo de la ventana
   function resizeCanvas() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
     // Centrar el coche horizontalmente y colocarlo en la parte inferior
-    car.x = (canvas.width - carWidth) / 2;
+    car.x = canvas.width / 2;
     car.y = canvas.height - carHeight - 40;
   }
 
-  // Actualiza la física del coche (aceleración / fricción)
+  // Actualiza la física del coche (aceleración / fricción / rotación)
   function update() {
+    const accelerating = keyboardState.up || isTouchAccelerating();
+    const turningLeft = keyboardState.left || isTouchTurningLeft();
+    const turningRight = keyboardState.right || isTouchTurningRight();
+
     if (accelerating) {
       car.velocity += ACCELERATION;
       if (car.velocity > MAX_SPEED) car.velocity = MAX_SPEED;
@@ -61,19 +73,30 @@
       if (Math.abs(car.velocity) < MIN_VELOCITY) car.velocity = 0;
     }
 
-    // El coche avanza "hacia adelante" (hacia arriba de la pantalla)
-    car.y -= car.velocity;
+    // Solo tiene sentido girar si el coche se está moviendo
+    if (car.velocity !== 0) {
+      if (turningLeft) car.angle -= TURN_SPEED;
+      if (turningRight) car.angle += TURN_SPEED;
+    }
+
+    // El coche avanza en la dirección hacia la que apunta (angle 0 = hacia arriba)
+    car.x += Math.sin(car.angle) * car.velocity;
+    car.y -= Math.cos(car.angle) * car.velocity;
   }
 
-  // Dibuja el fondo oscuro y el coche
+  // Dibuja el fondo oscuro y el coche (rotado según su ángulo)
   function draw() {
     // Fondo oscuro
     ctx.fillStyle = '#1a1a1a';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     // Coche
+    ctx.save();
+    ctx.translate(car.x, car.y);
+    ctx.rotate(car.angle);
     ctx.fillStyle = '#e63946';
-    ctx.fillRect(car.x, car.y, carWidth, carHeight);
+    ctx.fillRect(-carWidth / 2, -carHeight / 2, carWidth, carHeight);
+    ctx.restore();
   }
 
   // Bucle principal del juego
@@ -86,73 +109,73 @@
   // --- Controles de teclado ---
   window.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
-      accelerating = true;
+      keyboardState.up = true;
+    } else if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
+      keyboardState.left = true;
+    } else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
+      keyboardState.right = true;
     }
   });
 
   window.addEventListener('keyup', (e) => {
     if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
-      accelerating = false;
+      keyboardState.up = false;
+    } else if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
+      keyboardState.left = false;
+    } else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
+      keyboardState.right = false;
     }
   });
 
-  // --- Controles táctiles: esquina superior derecha de la pantalla ---
-  // Zona de control dedicada (invisible por ahora): 30% del ancho y 30% del alto,
-  // pegada a la esquina superior derecha.
+  // --- Controles táctiles (multitouch) ---
+  // Zonas de control (invisibles por ahora):
+  //   - Acelerar: esquina superior derecha (30% ancho x 30% alto)
+  //   - Girar izquierda: mitad izquierda de la pantalla (alto completo)
+  //   - Girar derecha: mitad derecha, mitad inferior de la pantalla
   const CONTROL_ZONE_WIDTH_RATIO = 0.3;
   const CONTROL_ZONE_HEIGHT_RATIO = 0.3;
 
-  function isTouchInControlZone(touch) {
-    const zoneMinX = window.innerWidth * (1 - CONTROL_ZONE_WIDTH_RATIO);
-    const zoneMaxY = window.innerHeight * CONTROL_ZONE_HEIGHT_RATIO;
-    return touch.clientX >= zoneMinX && touch.clientY <= zoneMaxY;
+  // Recorre TODOS los dedos activos (e.touches) y recalcula qué zonas
+  // están siendo pulsadas en este instante. Esto permite, por ejemplo,
+  // acelerar con un dedo y girar con otro al mismo tiempo.
+  function updateTouchControls(touches) {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+
+    let accelerate = false;
+    let left = false;
+    let right = false;
+
+    for (let i = 0; i < touches.length; i++) {
+      const touch = touches[i];
+
+      const inAccelZone =
+        touch.clientX >= w * (1 - CONTROL_ZONE_WIDTH_RATIO) &&
+        touch.clientY <= h * CONTROL_ZONE_HEIGHT_RATIO;
+
+      if (inAccelZone) {
+        accelerate = true;
+      } else if (touch.clientX < w / 2) {
+        left = true;
+      } else if (touch.clientX >= w / 2 && touch.clientY >= h / 2) {
+        right = true;
+      }
+    }
+
+    touchState.accelerate = accelerate;
+    touchState.left = left;
+    touchState.right = right;
   }
 
-  // Guardamos el identifier del toque que está acelerando, para saber
-  // exactamente cuándo ese dedo concreto se levanta.
-  let activeTouchId = null;
-
-  canvas.addEventListener('touchstart', (e) => {
+  function handleTouchEvent(e) {
     e.preventDefault(); // evita zoom / scroll del navegador al tocar
+    updateTouchControls(e.touches); // e.touches = todos los dedos actualmente en pantalla
+  }
 
-    if (activeTouchId !== null) return; // ya hay un toque controlando
-
-    for (const touch of e.changedTouches) {
-      if (isTouchInControlZone(touch)) {
-        accelerating = true;
-        activeTouchId = touch.identifier;
-        break;
-      }
-    }
-  }, { passive: false });
-
-  canvas.addEventListener('touchend', (e) => {
-    e.preventDefault();
-
-    for (const touch of e.changedTouches) {
-      if (touch.identifier === activeTouchId) {
-        accelerating = false;
-        activeTouchId = null;
-      }
-    }
-  }, { passive: false });
-
-  canvas.addEventListener('touchcancel', (e) => {
-    e.preventDefault();
-
-    for (const touch of e.changedTouches) {
-      if (touch.identifier === activeTouchId) {
-        accelerating = false;
-        activeTouchId = null;
-      }
-    }
-  }, { passive: false });
-
-  // Bloquear también el movimiento táctil general sobre el canvas
-  // (evita gestos de scroll/zoom accidentales mientras se juega)
-  canvas.addEventListener('touchmove', (e) => {
-    e.preventDefault();
-  }, { passive: false });
+  canvas.addEventListener('touchstart', handleTouchEvent, { passive: false });
+  canvas.addEventListener('touchmove', handleTouchEvent, { passive: false });
+  canvas.addEventListener('touchend', handleTouchEvent, { passive: false });
+  canvas.addEventListener('touchcancel', handleTouchEvent, { passive: false });
 
   window.addEventListener('resize', resizeCanvas);
 
