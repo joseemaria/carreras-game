@@ -10,9 +10,11 @@
     padding: 0;
     overflow: hidden;
     background: #111;
+    touch-action: none;
   }
   canvas {
     display: block;
+    touch-action: none;
   }
 </style>
 </head>
@@ -44,11 +46,10 @@
 
   // --- Estado de controles (combinación de teclado + táctil) ---
   const keyboardState = { up: false, left: false, right: false };
-  const touchState = { accelerate: false, left: false, right: false };
 
-  function isTouchAccelerating() { return touchState.accelerate; }
-  function isTouchTurningLeft() { return touchState.left; }
-  function isTouchTurningRight() { return touchState.right; }
+  // Array global de toques activos: cada elemento es { identifier, x, y }.
+  // Se actualiza directamente en los eventos touchstart/touchmove/touchend/touchcancel.
+  let activeTouches = [];
 
   // Ajustar el canvas al tamaño completo de la ventana
   function resizeCanvas() {
@@ -59,11 +60,45 @@
     car.y = canvas.height - carHeight - 40;
   }
 
+  // Zonas de control (se dibujan como guía visual provisional):
+  //   - Acelerar ("Gas"): X > 70% del ancho, Y < 40% del alto (esquina superior derecha)
+  //   - Girar Izquierda: X < 50% del ancho
+  //   - Girar Derecha: X > 50% del ancho y Y > 40% del alto
+  const ACCEL_ZONE_X_RATIO = 0.7;
+  const ACCEL_ZONE_Y_RATIO = 0.4;
+  const TURN_ZONE_X_RATIO = 0.5;
+  const RIGHT_ZONE_Y_RATIO = 0.4;
+
+  // Evalúa, a partir del array global de toques activos, qué controles
+  // táctiles están pulsados EN ESTE FRAME. Se llama desde update().
+  function evaluateTouchControls() {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+
+    let accelerate = false;
+    let left = false;
+    let right = false;
+
+    for (const touch of activeTouches) {
+      if (touch.x > w * ACCEL_ZONE_X_RATIO && touch.y < h * ACCEL_ZONE_Y_RATIO) {
+        accelerate = true;
+      } else if (touch.x < w * TURN_ZONE_X_RATIO) {
+        left = true;
+      } else if (touch.x > w * TURN_ZONE_X_RATIO && touch.y > h * RIGHT_ZONE_Y_RATIO) {
+        right = true;
+      }
+    }
+
+    return { accelerate, left, right };
+  }
+
   // Actualiza la física del coche (aceleración / fricción / rotación)
   function update() {
-    const accelerating = keyboardState.up || isTouchAccelerating();
-    const turningLeft = keyboardState.left || isTouchTurningLeft();
-    const turningRight = keyboardState.right || isTouchTurningRight();
+    const touch = evaluateTouchControls();
+
+    const accelerating = keyboardState.up || touch.accelerate;
+    const turningLeft = keyboardState.left || touch.left;
+    const turningRight = keyboardState.right || touch.right;
 
     if (accelerating) {
       car.velocity += ACCELERATION;
@@ -84,11 +119,59 @@
     car.y -= Math.cos(car.angle) * car.velocity;
   }
 
+  // Dibuja las 3 zonas táctiles como recuadros semitransparentes con texto guía
+  function drawTouchZones() {
+    const w = canvas.width;
+    const h = canvas.height;
+
+    ctx.save();
+    ctx.font = 'bold 20px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // Zona "Gas": X > 70%, Y < 40% (esquina superior derecha)
+    const accelX = w * ACCEL_ZONE_X_RATIO;
+    const accelW = w - accelX;
+    const accelH = h * ACCEL_ZONE_Y_RATIO;
+    ctx.fillStyle = 'rgba(76, 201, 240, 0.2)';
+    ctx.fillRect(accelX, 0, accelW, accelH);
+    ctx.strokeStyle = 'rgba(76, 201, 240, 0.6)';
+    ctx.strokeRect(accelX, 0, accelW, accelH);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+    ctx.fillText('Gas', accelX + accelW / 2, accelH / 2);
+
+    // Zona "Girar Izq": X < 50%, alto completo
+    const leftW = w * TURN_ZONE_X_RATIO;
+    ctx.fillStyle = 'rgba(247, 127, 0, 0.15)';
+    ctx.fillRect(0, 0, leftW, h);
+    ctx.strokeStyle = 'rgba(247, 127, 0, 0.5)';
+    ctx.strokeRect(0, 0, leftW, h);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+    ctx.fillText('Girar Izq', leftW / 2, h / 2);
+
+    // Zona "Girar Der": X > 50%, Y > 40%
+    const rightX = w * TURN_ZONE_X_RATIO;
+    const rightY = h * RIGHT_ZONE_Y_RATIO;
+    const rightW = w - rightX;
+    const rightH = h - rightY;
+    ctx.fillStyle = 'rgba(144, 190, 109, 0.15)';
+    ctx.fillRect(rightX, rightY, rightW, rightH);
+    ctx.strokeStyle = 'rgba(144, 190, 109, 0.5)';
+    ctx.strokeRect(rightX, rightY, rightW, rightH);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+    ctx.fillText('Girar Der', rightX + rightW / 2, rightY + rightH / 2);
+
+    ctx.restore();
+  }
+
   // Dibuja el fondo oscuro y el coche (rotado según su ángulo)
   function draw() {
     // Fondo oscuro
     ctx.fillStyle = '#1a1a1a';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Zonas táctiles guía (provisional)
+    drawTouchZones();
 
     // Coche
     ctx.save();
@@ -128,54 +211,55 @@
   });
 
   // --- Controles táctiles (multitouch) ---
-  // Zonas de control (invisibles por ahora):
-  //   - Acelerar: esquina superior derecha (30% ancho x 30% alto)
-  //   - Girar izquierda: mitad izquierda de la pantalla (alto completo)
-  //   - Girar derecha: mitad derecha, mitad inferior de la pantalla
-  const CONTROL_ZONE_WIDTH_RATIO = 0.3;
-  const CONTROL_ZONE_HEIGHT_RATIO = 0.3;
+  // El array activeTouches se mantiene sincronizado con los dedos reales
+  // sobre la pantalla en cada uno de estos 4 eventos. La evaluación de
+  // zonas ocurre aparte, en evaluateTouchControls(), dentro de update().
 
-  // Recorre TODOS los dedos activos (e.touches) y recalcula qué zonas
-  // están siendo pulsadas en este instante. Esto permite, por ejemplo,
-  // acelerar con un dedo y girar con otro al mismo tiempo.
-  function updateTouchControls(touches) {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-
-    let accelerate = false;
-    let left = false;
-    let right = false;
-
-    for (let i = 0; i < touches.length; i++) {
-      const touch = touches[i];
-
-      const inAccelZone =
-        touch.clientX >= w * (1 - CONTROL_ZONE_WIDTH_RATIO) &&
-        touch.clientY <= h * CONTROL_ZONE_HEIGHT_RATIO;
-
-      if (inAccelZone) {
-        accelerate = true;
-      } else if (touch.clientX < w / 2) {
-        left = true;
-      } else if (touch.clientX >= w / 2 && touch.clientY >= h / 2) {
-        right = true;
-      }
+  function upsertTouch(touch) {
+    const existing = activeTouches.find(t => t.identifier === touch.identifier);
+    if (existing) {
+      existing.x = touch.clientX;
+      existing.y = touch.clientY;
+    } else {
+      activeTouches.push({
+        identifier: touch.identifier,
+        x: touch.clientX,
+        y: touch.clientY
+      });
     }
-
-    touchState.accelerate = accelerate;
-    touchState.left = left;
-    touchState.right = right;
   }
 
-  function handleTouchEvent(e) {
-    e.preventDefault(); // evita zoom / scroll del navegador al tocar
-    updateTouchControls(e.touches); // e.touches = todos los dedos actualmente en pantalla
+  function removeTouch(touch) {
+    activeTouches = activeTouches.filter(t => t.identifier !== touch.identifier);
   }
 
-  canvas.addEventListener('touchstart', handleTouchEvent, { passive: false });
-  canvas.addEventListener('touchmove', handleTouchEvent, { passive: false });
-  canvas.addEventListener('touchend', handleTouchEvent, { passive: false });
-  canvas.addEventListener('touchcancel', handleTouchEvent, { passive: false });
+  canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    for (const touch of e.changedTouches) {
+      upsertTouch(touch);
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    for (const touch of e.changedTouches) {
+      upsertTouch(touch);
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchend', (e) => {
+    e.preventDefault();
+    for (const touch of e.changedTouches) {
+      removeTouch(touch);
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchcancel', (e) => {
+    e.preventDefault();
+    for (const touch of e.changedTouches) {
+      removeTouch(touch);
+    }
+  }, { passive: false });
 
   window.addEventListener('resize', resizeCanvas);
 
