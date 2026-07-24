@@ -96,26 +96,63 @@
     }
   });
 
-  // --- Controles táctiles: mitad superior de la pantalla ---
-  function isTouchInUpperHalf(touch) {
-    return touch.clientY < window.innerHeight / 2;
+  // --- Controles táctiles: esquina superior derecha de la pantalla ---
+  // Zona de control dedicada (invisible por ahora): 30% del ancho y 30% del alto,
+  // pegada a la esquina superior derecha.
+  const CONTROL_ZONE_WIDTH_RATIO = 0.3;
+  const CONTROL_ZONE_HEIGHT_RATIO = 0.3;
+
+  function isTouchInControlZone(touch) {
+    const zoneMinX = window.innerWidth * (1 - CONTROL_ZONE_WIDTH_RATIO);
+    const zoneMaxY = window.innerHeight * CONTROL_ZONE_HEIGHT_RATIO;
+    return touch.clientX >= zoneMinX && touch.clientY <= zoneMaxY;
   }
 
+  // Guardamos el identifier del toque que está acelerando, para saber
+  // exactamente cuándo ese dedo concreto se levanta.
+  let activeTouchId = null;
+
   canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault(); // evita zoom / scroll del navegador al tocar
+
+    if (activeTouchId !== null) return; // ya hay un toque controlando
+
     for (const touch of e.changedTouches) {
-      if (isTouchInUpperHalf(touch)) {
+      if (isTouchInControlZone(touch)) {
         accelerating = true;
+        activeTouchId = touch.identifier;
+        break;
       }
     }
-  }, { passive: true });
+  }, { passive: false });
 
-  canvas.addEventListener('touchend', () => {
-    accelerating = false;
-  }, { passive: true });
+  canvas.addEventListener('touchend', (e) => {
+    e.preventDefault();
 
-  canvas.addEventListener('touchcancel', () => {
-    accelerating = false;
-  }, { passive: true });
+    for (const touch of e.changedTouches) {
+      if (touch.identifier === activeTouchId) {
+        accelerating = false;
+        activeTouchId = null;
+      }
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchcancel', (e) => {
+    e.preventDefault();
+
+    for (const touch of e.changedTouches) {
+      if (touch.identifier === activeTouchId) {
+        accelerating = false;
+        activeTouchId = null;
+      }
+    }
+  }, { passive: false });
+
+  // Bloquear también el movimiento táctil general sobre el canvas
+  // (evita gestos de scroll/zoom accidentales mientras se juega)
+  canvas.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+  }, { passive: false });
 
   window.addEventListener('resize', resizeCanvas);
 
