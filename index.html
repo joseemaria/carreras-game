@@ -23,33 +23,105 @@
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
+  // Dimensiones del coche
+  const carWidth = 40;
+  const carHeight = 70;
+
+  // Estado del coche
+  const car = {
+    x: 0,
+    y: 0,
+    velocity: 0
+  };
+
+  // Parámetros de movimiento
+  const ACCELERATION = 0.15;   // aumento de velocidad por frame mientras se acelera
+  const FRICTION = 0.9;        // al soltar, conserva el 90% (pierde un 10%)
+  const MAX_SPEED = 8;         // velocidad máxima
+  const MIN_VELOCITY = 0.01;   // umbral para redondear a 0 y evitar decimales infinitos
+
+  let accelerating = false;
+
   // Ajustar el canvas al tamaño completo de la ventana
   function resizeCanvas() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-    draw();
+    // Centrar el coche horizontalmente y colocarlo en la parte inferior
+    car.x = (canvas.width - carWidth) / 2;
+    car.y = canvas.height - carHeight - 40;
   }
 
-  // Dibuja el fondo oscuro y el coche (rectángulo centrado)
+  // Actualiza la física del coche (aceleración / fricción)
+  function update() {
+    if (accelerating) {
+      car.velocity += ACCELERATION;
+      if (car.velocity > MAX_SPEED) car.velocity = MAX_SPEED;
+    } else {
+      car.velocity *= FRICTION;
+      if (Math.abs(car.velocity) < MIN_VELOCITY) car.velocity = 0;
+    }
+
+    // El coche avanza "hacia adelante" (hacia arriba de la pantalla)
+    car.y -= car.velocity;
+  }
+
+  // Dibuja el fondo oscuro y el coche
   function draw() {
     // Fondo oscuro
     ctx.fillStyle = '#1a1a1a';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Coche: rectángulo centrado
-    const carWidth = 40;
-    const carHeight = 70;
-    const carX = (canvas.width - carWidth) / 2;
-    const carY = (canvas.height - carHeight) / 2;
-
+    // Coche
     ctx.fillStyle = '#e63946';
-    ctx.fillRect(carX, carY, carWidth, carHeight);
+    ctx.fillRect(car.x, car.y, carWidth, carHeight);
   }
+
+  // Bucle principal del juego
+  function gameLoop() {
+    update();
+    draw();
+    requestAnimationFrame(gameLoop);
+  }
+
+  // --- Controles de teclado ---
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
+      accelerating = true;
+    }
+  });
+
+  window.addEventListener('keyup', (e) => {
+    if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
+      accelerating = false;
+    }
+  });
+
+  // --- Controles táctiles: mitad superior de la pantalla ---
+  function isTouchInUpperHalf(touch) {
+    return touch.clientY < window.innerHeight / 2;
+  }
+
+  canvas.addEventListener('touchstart', (e) => {
+    for (const touch of e.changedTouches) {
+      if (isTouchInUpperHalf(touch)) {
+        accelerating = true;
+      }
+    }
+  }, { passive: true });
+
+  canvas.addEventListener('touchend', () => {
+    accelerating = false;
+  }, { passive: true });
+
+  canvas.addEventListener('touchcancel', () => {
+    accelerating = false;
+  }, { passive: true });
 
   window.addEventListener('resize', resizeCanvas);
 
   // Inicializar
   resizeCanvas();
+  gameLoop();
 </script>
 </body>
 </html>
