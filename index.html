@@ -164,6 +164,87 @@
     ctx.restore();
   }
 
+  // Dibuja el coche: deportivo visto desde arriba (ruedas, carrocería,
+  // parabrisas, alerón). Todo se dibuja en coordenadas locales centradas
+  // en (0,0), con el frente apuntando hacia -y; luego se traslada/rota
+  // según la posición y el ángulo reales del coche.
+  function drawCar() {
+    const w = carWidth;
+    const h = carHeight;
+    const halfW = w / 2;
+    const halfH = h / 2;
+
+    ctx.save();
+    ctx.translate(car.x, car.y);
+    ctx.rotate(car.angle);
+
+    // --- Ruedas (negras, debajo de la carrocería) ---
+    const wheelW = 7;
+    const wheelH = 16;
+    ctx.fillStyle = '#0d0d0d';
+    ctx.fillRect(-halfW - wheelW / 2 + 3, -halfH + 6, wheelW, wheelH);          // delantera izq.
+    ctx.fillRect(halfW - wheelW / 2 - 3, -halfH + 6, wheelW, wheelH);           // delantera der.
+    ctx.fillRect(-halfW - wheelW / 2 + 3, halfH - wheelH - 8, wheelW, wheelH);  // trasera izq.
+    ctx.fillRect(halfW - wheelW / 2 - 3, halfH - wheelH - 8, wheelW, wheelH);   // trasera der.
+
+    // --- Alerón trasero ---
+    ctx.fillStyle = '#0a0a0a';
+    ctx.fillRect(-halfW + 6, halfH - 11, 4, 8);   // soporte izq.
+    ctx.fillRect(halfW - 10, halfH - 11, 4, 8);   // soporte der.
+    ctx.fillRect(-halfW + 1, halfH - 6, w - 2, 5); // ala del alerón
+
+    // --- Carrocería (rectángulo con esquinas redondeadas) ---
+    const r = 9;
+    ctx.beginPath();
+    ctx.moveTo(-halfW + r, -halfH);
+    ctx.lineTo(halfW - r, -halfH);
+    ctx.quadraticCurveTo(halfW, -halfH, halfW, -halfH + r);
+    ctx.lineTo(halfW, halfH - r);
+    ctx.quadraticCurveTo(halfW, halfH, halfW - r, halfH);
+    ctx.lineTo(-halfW + r, halfH);
+    ctx.quadraticCurveTo(-halfW, halfH, -halfW, halfH - r);
+    ctx.lineTo(-halfW, -halfH + r);
+    ctx.quadraticCurveTo(-halfW, -halfH, -halfW + r, -halfH);
+    ctx.closePath();
+
+    const bodyGradient = ctx.createLinearGradient(0, -halfH, 0, halfH);
+    bodyGradient.addColorStop(0, '#ff4d5e');
+    bodyGradient.addColorStop(1, '#c1121f');
+    ctx.fillStyle = bodyGradient;
+    ctx.fill();
+    ctx.strokeStyle = '#7a0a12';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // --- Franja central deportiva ---
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+    ctx.fillRect(-3, -halfH + 5, 6, h - 10);
+
+    // --- Parabrisas (trapecio cerca del frente, frente = -y) ---
+    ctx.beginPath();
+    ctx.moveTo(-halfW * 0.55, -halfH * 0.6);
+    ctx.lineTo(halfW * 0.55, -halfH * 0.6);
+    ctx.lineTo(halfW * 0.35, -halfH * 0.1);
+    ctx.lineTo(-halfW * 0.35, -halfH * 0.1);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(140, 205, 230, 0.85)';
+    ctx.fill();
+    ctx.strokeStyle = '#2b2b2b';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // --- Faros delanteros ---
+    ctx.fillStyle = '#fff3b0';
+    ctx.beginPath();
+    ctx.arc(-halfW * 0.6, -halfH + 4, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(halfW * 0.6, -halfH + 4, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
   // Dibuja el fondo oscuro y el coche (rotado según su ángulo)
   function draw() {
     // Fondo oscuro
@@ -174,12 +255,7 @@
     drawTouchZones();
 
     // Coche
-    ctx.save();
-    ctx.translate(car.x, car.y);
-    ctx.rotate(car.angle);
-    ctx.fillStyle = '#e63946';
-    ctx.fillRect(-carWidth / 2, -carHeight / 2, carWidth, carHeight);
-    ctx.restore();
+    drawCar();
   }
 
   // Bucle principal del juego
