@@ -29,7 +29,8 @@
   const carWidth = 40;
   const carHeight = 70;
 
-  // Estado del coche (x,y = centro del coche; angle en radianes, 0 = apuntando hacia arriba)
+  // Estado del coche (x,y = centro del coche EN COORDENADAS DE MUNDO;
+  // angle en radianes, 0 = apuntando "hacia arriba" del mundo)
   const car = {
     x: 0,
     y: 0,
@@ -44,6 +45,44 @@
   const MIN_VELOCITY = 0.01;   // umbral para redondear a 0 y evitar decimales infinitos
   const TURN_SPEED = 0.045;    // radianes que gira el coche por frame
 
+  // ===================================================================
+  // CIRCUITO (en coordenadas de MUNDO, independientes del tamaño de pantalla)
+  // ===================================================================
+  // Trazado tipo óvalo/estadio: dos rectas largas unidas por dos curvas
+  // semicirculares. Es ancho de sobra para 3-4 coches en paralelo, y lo
+  // bastante largo para que 3 vueltas duren en torno a 3 minutos si se
+  // circula cerca de la velocidad máxima.
+  const STRAIGHT_LENGTH = 8000;  // longitud de cada recta (línea central)
+  const TURN_RADIUS = 2000;      // radio de las curvas (línea central)
+  const TRACK_WIDTH = 280;       // ancho del asfalto (~4 coches de 40px + huecos)
+  const TOTAL_LAPS = 3;
+
+  // Centro de las dos curvas (izquierda y derecha) del óvalo
+  const RIGHT_TURN_CENTER = { x: STRAIGHT_LENGTH / 2, y: 0 };
+  const LEFT_TURN_CENTER = { x: -STRAIGHT_LENGTH / 2, y: 0 };
+
+  // Línea de meta: centrada en la recta inferior (y = +TURN_RADIUS), en x = 0
+  const FINISH_X = 0;
+  const FINISH_Y = TURN_RADIUS;
+
+  // Punto de salida del coche: en la recta inferior, cerca del final de la
+  // curva derecha, lejos de la meta, para que la primera vuelta completa
+  // se recorra entera antes de cruzar la línea por primera vez.
+  const START_X = STRAIGHT_LENGTH / 2 - 150;
+  const START_Y = TURN_RADIUS;
+  const START_ANGLE = -Math.PI / 2; // mirando hacia -x (sentido de la recta inferior)
+
+  // --- Cámara (sigue al coche suavemente, tipo F1 on-board) ---
+  const camera = { x: START_X, y: START_Y };
+  const CAMERA_SMOOTH = 0.08; // 0 = cámara fija, 1 = cámara pegada al coche sin suavizado
+
+  // --- Cronómetro y vueltas ---
+  let raceStartTime = performance.now();
+  let lapStartTime = performance.now();
+  let currentLap = 1;
+  let lastLapTime = null;      // en segundos, null hasta completar la 1ª vuelta
+  let previousCarX = START_X;  // para detectar el cruce de la línea de meta
+
   // --- Estado de controles (combinación de teclado + táctil) ---
   const keyboardState = { up: false, left: false, right: false };
 
@@ -51,13 +90,22 @@
   // Se actualiza directamente en los eventos touchstart/touchmove/touchend/touchcancel.
   let activeTouches = [];
 
-  // Ajustar el canvas al tamaño completo de la ventana
+  // Ajustar el canvas al tamaño completo de la ventana (no afecta al coche,
+  // que vive en coordenadas de mundo independientes de la pantalla)
   function resizeCanvas() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-    // Centrar el coche horizontalmente y colocarlo en la parte inferior
-    car.x = canvas.width / 2;
-    car.y = canvas.height - carHeight - 40;
+  }
+
+  // Coloca el coche en la parrilla de salida
+  function initCar() {
+    car.x = START_X;
+    car.y = START_Y;
+    car.angle = START_ANGLE;
+    car.velocity = 0;
+    camera.x = START_X;
+    camera.y = START_Y;
+    previousCarX = START_X;
   }
 
   // Zonas de control (se dibujan como guía visual provisional):
@@ -92,6 +140,25 @@
     return { accelerate, left, right };
   }
 
+  // Comprueba si el coche acaba de cruzar la línea de meta (de derecha a
+  // izquierda, que es el sentido de circulación en la recta inferior) y,
+  // si es así, cierra la vuelta actual y arranca la siguiente.
+  function checkLapCrossing() {
+    const crossedX = previousCarX > FINISH_X && car.x <= FINISH_X;
+    const withinTrack = Math.abs(car.y - FINISH_Y) < TRACK_WIDTH / 2;
+
+    if (crossedX && withinTrack) {
+      const now = performance.now();
+      lastLapTime = (now - lapStartTime) / 1000;
+      lapStartTime = now;
+      if (currentLap < TOTAL_LAPS) {
+        currentLap++;
+      }
+    }
+
+    previousCarX = car.x;
+  }
+
   // Actualiza la física del coche (aceleración / fricción / rotación)
   function update() {
     const touch = evaluateTouchControls();
@@ -114,12 +181,19 @@
       if (turningRight) car.angle += TURN_SPEED;
     }
 
-    // El coche avanza en la dirección hacia la que apunta (angle 0 = hacia arriba)
+    // El coche avanza en la dirección hacia la que apunta (angle 0 = "arriba" del mundo)
     car.x += Math.sin(car.angle) * car.velocity;
     car.y -= Math.cos(car.angle) * car.velocity;
+
+    // Cámara: sigue al coche con suavizado (interpolación lineal)
+    camera.x += (car.x - camera.x) * CAMERA_SMOOTH;
+    camera.y += (car.y - camera.y) * CAMERA_SMOOTH;
+
+    checkLapCrossing();
   }
 
   // Dibuja las 3 zonas táctiles como recuadros semitransparentes con texto guía
+  // (se dibuja en espacio de PANTALLA, no de mundo, así que no se ve afectado por la cámara)
   function drawTouchZones() {
     const w = canvas.width;
     const h = canvas.height;
@@ -167,7 +241,8 @@
   // Dibuja el coche: deportivo visto desde arriba (ruedas, carrocería,
   // parabrisas, alerón). Todo se dibuja en coordenadas locales centradas
   // en (0,0), con el frente apuntando hacia -y; luego se traslada/rota
-  // según la posición y el ángulo reales del coche.
+  // según la posición y el ángulo reales del coche EN EL MUNDO (el
+  // llamador ya habrá aplicado el desplazamiento de cámara antes de esto).
   function drawCar() {
     const w = carWidth;
     const h = carHeight;
@@ -245,96 +320,68 @@
     ctx.restore();
   }
 
-  // Dibuja un rectángulo con esquinas redondeadas como PATH actual del contexto
-  // (reutilizable tanto para rellenar como para trazar el contorno).
-  function traceRoundedRect(x, y, w, h, r) {
+  // Construye, como PATH actual del contexto, la línea central del óvalo:
+  // recta inferior -> curva derecha -> recta superior -> curva izquierda.
+  function traceTrackCenterline() {
     ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.lineTo(x + w - r, y);
-    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-    ctx.lineTo(x + w, y + h - r);
-    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-    ctx.lineTo(x + r, y + h);
-    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-    ctx.lineTo(x, y + r);
-    ctx.quadraticCurveTo(x, y, x + r, y);
+    // Recta superior (de izquierda a derecha)
+    ctx.moveTo(-STRAIGHT_LENGTH / 2, -TURN_RADIUS);
+    ctx.lineTo(STRAIGHT_LENGTH / 2, -TURN_RADIUS);
+    // Curva derecha (de arriba a abajo, pasando por la derecha)
+    ctx.arc(RIGHT_TURN_CENTER.x, RIGHT_TURN_CENTER.y, TURN_RADIUS, -Math.PI / 2, Math.PI / 2, false);
+    // Recta inferior (de derecha a izquierda, aquí está la línea de meta)
+    ctx.lineTo(-STRAIGHT_LENGTH / 2, TURN_RADIUS);
+    // Curva izquierda (de abajo a arriba, pasando por la izquierda), cierra el óvalo
+    ctx.arc(LEFT_TURN_CENTER.x, LEFT_TURN_CENTER.y, TURN_RADIUS, Math.PI / 2, Math.PI * 1.5, false);
     ctx.closePath();
   }
 
-  // Dibuja el circuito: un óvalo con curvas (rectángulo redondeado hueco),
-  // asfalto gris oscuro, pianos rojo/blanco en ambos bordes y línea de meta.
+  // Dibuja el circuito completo en coordenadas de MUNDO: asfalto ancho,
+  // pianos rojo/blanco en ambos bordes (siguiendo la curva) y línea de meta.
   function drawTrack() {
-    const w = canvas.width;
-    const h = canvas.height;
+    const curbExtra = 14; // cuánto sobresale el piano a cada lado del asfalto
+    const dash = 90;      // longitud de cada segmento rojo/blanco del piano
 
-    // Trazado exterior del circuito
-    const outerW = w * 0.82;
-    const outerH = h * 0.78;
-    const outerX = (w - outerW) / 2;
-    const outerY = (h - outerH) / 2;
-    const outerR = Math.min(outerW, outerH) * 0.28;
-
-    // Ancho del asfalto (grosor de la pista)
-    const trackWidth = Math.min(outerW, outerH) * 0.22;
-
-    // Trazado interior (el "agujero" del óvalo)
-    const innerW = outerW - trackWidth * 2;
-    const innerH = outerH - trackWidth * 2;
-    const innerX = outerX + trackWidth;
-    const innerY = outerY + trackWidth;
-    const innerR = Math.max(outerR - trackWidth, 10);
-
-    // Asfalto (forma exterior rellena de gris oscuro)
-    traceRoundedRect(outerX, outerY, outerW, outerH, outerR);
-    ctx.fillStyle = '#3d3d3d';
-    ctx.fill();
-
-    // Hueco interior (mismo color que el fondo, deja ver el "óvalo" del circuito)
-    traceRoundedRect(innerX, innerY, innerW, innerH, innerR);
-    ctx.fillStyle = '#1a1a1a';
-    ctx.fill();
-
-    // Pianos rojo/blanco en el borde exterior e interior del asfalto
-    const curbWidth = 10;
-    const dash = 18;
-
+    // 1) Capa de pianos: se traza MÁS ANCHA que el asfalto, con un patrón
+    //    de guiones blanco/rojo alternados a lo largo de todo el trazado.
+    traceTrackCenterline();
     ctx.save();
-    ctx.lineWidth = curbWidth;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = TRACK_WIDTH + curbExtra * 2;
     ctx.setLineDash([dash, dash]);
-
-    traceRoundedRect(outerX, outerY, outerW, outerH, outerR);
     ctx.lineDashOffset = 0;
     ctx.strokeStyle = '#f1f1f1';
     ctx.stroke();
     ctx.lineDashOffset = dash;
     ctx.strokeStyle = '#e63946';
     ctx.stroke();
-
-    traceRoundedRect(innerX, innerY, innerW, innerH, innerR);
-    ctx.lineDashOffset = 0;
-    ctx.strokeStyle = '#f1f1f1';
-    ctx.stroke();
-    ctx.lineDashOffset = dash;
-    ctx.strokeStyle = '#e63946';
-    ctx.stroke();
-
     ctx.restore();
 
-    // Línea de meta a cuadros, en la recta inferior del circuito
-    drawFinishLine(outerX, outerY, outerW, outerH, trackWidth);
+    // 2) Asfalto por encima, más estrecho: solo deja ver el piano en los bordes
+    traceTrackCenterline();
+    ctx.save();
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = TRACK_WIDTH;
+    ctx.strokeStyle = '#3d3d3d';
+    ctx.stroke();
+    ctx.restore();
+
+    // 3) Línea de meta a cuadros, cruzando la recta inferior en x = FINISH_X
+    drawFinishLine();
   }
 
-  // Dibuja la línea de meta (patrón de cuadros) cruzando la recta inferior
-  function drawFinishLine(outerX, outerY, outerW, outerH, trackWidth) {
-    const lineWidth = 22;
-    const lineHeight = trackWidth;
-    const lineX = outerX + outerW / 2 - lineWidth / 2;
-    const lineY = outerY + outerH - trackWidth;
+  // Dibuja la línea de meta (patrón de cuadros) en coordenadas de MUNDO
+  function drawFinishLine() {
+    const lineWidthPx = 26;
+    const lineX = FINISH_X - lineWidthPx / 2;
+    const lineY = FINISH_Y - TRACK_WIDTH / 2;
 
     const cols = 3;
-    const rows = 8;
-    const cellW = lineWidth / cols;
-    const cellH = lineHeight / rows;
+    const rows = 10;
+    const cellW = lineWidthPx / cols;
+    const cellH = TRACK_WIDTH / rows;
 
     for (let row = 0; row < rows; row++) {
       for (let col = 0; col < cols; col++) {
@@ -345,20 +392,71 @@
     }
   }
 
-  // Dibuja el fondo oscuro y el coche (rotado según su ángulo)
+  // Convierte segundos -> "MM:SS.d"
+  function formatTime(totalSeconds) {
+    if (totalSeconds === null || totalSeconds === undefined) return '--:--.-';
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = Math.floor(totalSeconds % 60);
+    const tenths = Math.floor((totalSeconds * 10) % 10);
+    return String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0') + '.' + tenths;
+  }
+
+  // HUD: tiempo total, vuelta actual y tiempo de la última vuelta.
+  // Se dibuja en espacio de PANTALLA (esquina superior izquierda), sin
+  // que le afecte la cámara ni el desplazamiento del mundo.
+  function drawHUD() {
+    const totalTime = (performance.now() - raceStartTime) / 1000;
+
+    const lines = [
+      'Tiempo Total: ' + formatTime(totalTime),
+      'Vuelta: ' + currentLap + '/' + TOTAL_LAPS,
+      'Última vuelta: ' + formatTime(lastLapTime)
+    ];
+
+    const paddingX = 16;
+    const paddingY = 12;
+    const lineHeight = 24;
+    const boxWidth = 230;
+    const boxHeight = paddingY * 2 + lineHeight * lines.length;
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+    ctx.fillRect(12, 12, boxWidth, boxHeight);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+    ctx.strokeRect(12, 12, boxWidth, boxHeight);
+
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#f1f1f1';
+
+    lines.forEach((line, i) => {
+      ctx.fillText(line, 12 + paddingX, 12 + paddingY + lineHeight * i + lineHeight / 2);
+    });
+
+    ctx.restore();
+  }
+
+  // Dibuja fondo, circuito (con cámara F1 que sigue al coche), zonas
+  // táctiles y HUD.
   function draw() {
-    // Fondo oscuro
+    // Fondo oscuro (pantalla completa)
     ctx.fillStyle = '#1a1a1a';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Circuito (asfalto, pianos y línea de meta)
+    // --- Mundo (circuito + coche), desplazado según la cámara ---
+    const offsetX = canvas.width / 2 - camera.x;
+    const offsetY = canvas.height / 2 - camera.y;
+
+    ctx.save();
+    ctx.translate(offsetX, offsetY);
     drawTrack();
-
-    // Zonas táctiles guía (provisional)
-    drawTouchZones();
-
-    // Coche
     drawCar();
+    ctx.restore();
+
+    // --- Pantalla (HUD y zonas táctiles), sin transformar ---
+    drawTouchZones();
+    drawHUD();
   }
 
   // Bucle principal del juego
@@ -444,6 +542,7 @@
 
   // Inicializar
   resizeCanvas();
+  initCar();
   gameLoop();
 </script>
 </body>
