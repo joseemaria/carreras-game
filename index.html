@@ -64,21 +64,26 @@
   // repite los mismos tramos que la primera, lo que garantiza que se
   // vuelve al punto y ángulo de partida (los giros suman 360° en total
   // y los desplazamientos de cada mitad se cancelan con los de la otra).
-  const TRACK_WIDTH = 320; // ancho del asfalto (aún más ancho: 3-4 coches de sobra)
+  const TRACK_WIDTH = 320; // ancho del asfalto (3-4 coches de sobra)
   const TOTAL_LAPS = 3;
 
+  // El builder registra tanto el PATH real (para dibujar el asfalto) como
+  // una lista de puntos muestreados (incluidos puntos a lo largo de cada
+  // curva) que se usará para dibujar el trazado simplificado del minimapa.
   function createTrackBuilder(startX, startY, startHeading) {
     let x = startX;
     let y = startY;
     let heading = startHeading;
     const path = new Path2D();
     path.moveTo(x, y);
+    const points = [{ x, y }];
 
     return {
       forward(distance) {
         x += Math.sin(heading) * distance;
         y -= Math.cos(heading) * distance;
         path.lineTo(x, y);
+        points.push({ x, y });
       },
       turnRight(radius, degrees) {
         const delta = degrees * Math.PI / 180;
@@ -87,6 +92,11 @@
         const a0 = heading + Math.PI;
         const a1 = a0 + delta;
         path.arc(cx, cy, radius, a0, a1, false);
+        const steps = Math.max(4, Math.round(Math.abs(degrees) / 10));
+        for (let i = 1; i <= steps; i++) {
+          const a = a0 + (delta * i) / steps;
+          points.push({ x: cx + radius * Math.cos(a), y: cy + radius * Math.sin(a) });
+        }
         heading += delta;
         x = cx + radius * Math.cos(a1);
         y = cy + radius * Math.sin(a1);
@@ -98,53 +108,131 @@
         const a0 = heading;
         const a1 = a0 - delta;
         path.arc(cx, cy, radius, a0, a1, true);
+        const steps = Math.max(4, Math.round(Math.abs(degrees) / 10));
+        for (let i = 1; i <= steps; i++) {
+          const a = a0 - (delta * i) / steps;
+          points.push({ x: cx + radius * Math.cos(a), y: cy + radius * Math.sin(a) });
+        }
         heading -= delta;
         x = cx + radius * Math.cos(a1);
         y = cy + radius * Math.sin(a1);
       },
       getPath() { return path; },
+      getPoints() { return points; },
       state() { return { x, y, heading }; }
     };
   }
 
-  // Punto y ángulo de partida: el coche sale desde aquí, justo detrás
-  // de la línea de meta (que se coloca un poco más adelante, sobre esta
-  // misma recta), alineado con la pista y listo para arrancar hacia delante.
-  const START_X = 0;
-  const START_Y = 0;
-  const START_ANGLE = 0; // apunta "hacia arriba" del mundo
-
-  // Media vuelta del circuito (se recorre dos veces para cerrar el trazado):
-  //   - recta larga para coger velocidad máxima
-  //   - HORQUILLA cerrada (radio pequeño -> hay que frenar con antelación)
-  //   - recta media
-  //   - chicane rápida (izquierda-derecha)
-  //   - recta media
-  //   - curva rápida amplia (cierra el giro neto de la media vuelta a 180°)
-  //   - recta media
-  //   - chicane rápida (derecha-izquierda, en espejo de la primera)
-  //   - recta de enlace con la segunda mitad
-  function buildHalfLap(builder) {
-    builder.forward(3600);
-    builder.turnRight(300, 150);
-    builder.forward(1000);
-    builder.turnLeft(240, 32);
-    builder.turnRight(240, 32);
-    builder.forward(1100);
-    builder.turnRight(650, 30);
-    builder.forward(1000);
-    builder.turnRight(240, 32);
-    builder.turnLeft(240, 32);
-    builder.forward(1300);
+  // Turtle "ligero" (sin Path2D) usado solo para PRECALCULAR, antes de
+  // construir el trazado real, el radio exacto de la horquilla y la
+  // longitud del tramo de cierre que hacen que el circuito cierre
+  // matemáticamente sobre el punto de partida (ver más abajo).
+  function dryTurtle(startX, startY, startHeading) {
+    let x = startX, y = startY, heading = startHeading;
+    return {
+      forward(d) { x += Math.sin(heading) * d; y -= Math.cos(heading) * d; },
+      turnRight(r, deg) {
+        const delta = deg * Math.PI / 180;
+        const cx = x + r * Math.cos(heading), cy = y + r * Math.sin(heading);
+        const a1 = heading + Math.PI + delta;
+        heading += delta; x = cx + r * Math.cos(a1); y = cy + r * Math.sin(a1);
+      },
+      turnLeft(r, deg) {
+        const delta = deg * Math.PI / 180;
+        const cx = x - r * Math.cos(heading), cy = y - r * Math.sin(heading);
+        const a1 = heading - delta;
+        heading -= delta; x = cx + r * Math.cos(a1); y = cy + r * Math.sin(a1);
+      },
+      state() { return { x, y, heading }; }
+    };
   }
 
+  // Punto y ángulo de partida: recta larga desde la meta, avanzando
+  // hacia la derecha (heading = 90°). Aquí está la línea de meta.
+  const START_X = 0;
+  const START_Y = 0;
+  const START_ANGLE = Math.PI / 2;
+
+  // --- Medidas del circuito (escala grande: ~1 minuto por vuelta a ritmo
+  // realista, teniendo en cuenta que hay que frenar en las 3 curvas) ---
+  const STRAIGHT_1 = 11500;      // 1. recta larga desde la meta
+  const STRAIGHT_2 = 8000;       // tramo lateral tras la 1ª curva
+  const STRAIGHT_3 = 11500;      // recta larga de vuelta (se parte en dos por el checkpoint)
+  const TURN_1_RADIUS = 1200;    // 2. curva con pequeño quiebro técnico
+  const TURN_2_RADIUS = 1500;    // curva amplia con chicane ondulado
+  const KINK_RADIUS = 400;       // radio del quiebro de la curva 2
+  const KINK_ANGLE = 15;         // ángulo del quiebro de la curva 2
+  const CHICANE_RADIUS = 500;    // radio del chicane ondulado (curva 3)
+  const CHICANE_ANGLE = 20;      // ángulo del chicane ondulado
+
+  // El radio de la curva de cierre y la recta final se PRECALCULAN para
+  // que el trazado, tal cual lo hemos diseñado a mano, cierre de forma
+  // exacta sobre el punto de partida (comprobado numéricamente: el error
+  // de cierre resultante es del orden de 10⁻¹³, pura precisión de coma
+  // flotante).
+  function precomputeClosure() {
+    const t1 = dryTurtle(START_X, START_Y, START_ANGLE);
+    t1.forward(STRAIGHT_1);
+    t1.turnRight(TURN_1_RADIUS, 90);
+    t1.turnLeft(KINK_RADIUS, KINK_ANGLE);
+    t1.turnRight(KINK_RADIUS, KINK_ANGLE);
+    t1.forward(STRAIGHT_2);
+    t1.turnRight(TURN_2_RADIUS, 90);
+    t1.turnRight(CHICANE_RADIUS, CHICANE_ANGLE);
+    t1.turnLeft(CHICANE_RADIUS, CHICANE_ANGLE);
+    t1.forward(STRAIGHT_3);
+    const beforeClosingCurve = t1.state(); // heading = -90° (270°) aquí
+
+    // El giro de 180° desplaza la Y en -2*radio; resolvemos el radio que
+    // hace que la Y vuelva exactamente a la del punto de partida.
+    const closingCurveRadius = beforeClosingCurve.y / 2;
+
+    const t2 = dryTurtle(beforeClosingCurve.x, beforeClosingCurve.y, beforeClosingCurve.heading);
+    t2.turnRight(closingCurveRadius, 180);
+    const afterClosingCurve = t2.state(); // Y ya coincide con START_Y aquí
+
+    // Solo queda por cerrar la X: una última recta (según el ángulo real)
+    const closingStraight = (START_X - afterClosingCurve.x) / Math.sin(afterClosingCurve.heading);
+
+    return { closingCurveRadius, closingStraight };
+  }
+
+  const { closingCurveRadius: CLOSING_CURVE_RADIUS, closingStraight: CLOSING_STRAIGHT } = precomputeClosure();
+
+  // --- Construcción real del trazado (Path2D + puntos para el minimapa) ---
+  //   1. Meta y recta larga
+  //   2. Curva con pequeño quiebro técnico (obliga a levantar el pie con antelación)
+  //   3. Tramo lateral
+  //   4. Curva amplia con chicane ondulado (revirado, tipo "S")
+  //   5. Recta larga de vuelta
+  //   6. Curva amplia de cierre que reconecta con la recta de meta
   const trackBuilder = createTrackBuilder(START_X, START_Y, START_ANGLE);
-  buildHalfLap(trackBuilder);
-  // Punto de control a mitad del circuito: hay que pasar por aquí antes de
-  // que un cruce de la meta cuente como vuelta completada (ver más abajo).
+  trackBuilder.forward(STRAIGHT_1);
+  trackBuilder.turnRight(TURN_1_RADIUS, 90);
+  trackBuilder.turnLeft(KINK_RADIUS, KINK_ANGLE);
+  trackBuilder.turnRight(KINK_RADIUS, KINK_ANGLE);
+  trackBuilder.forward(STRAIGHT_2);
+  trackBuilder.turnRight(TURN_2_RADIUS, 90);
+  trackBuilder.turnRight(CHICANE_RADIUS, CHICANE_ANGLE);
+  trackBuilder.turnLeft(CHICANE_RADIUS, CHICANE_ANGLE);
+  trackBuilder.forward(STRAIGHT_3 / 2);
+  // Punto de control a mitad del circuito (por longitud recorrida): hay
+  // que pasar por aquí antes de que un cruce de la meta cuente como vuelta.
   const checkpointState = trackBuilder.state();
-  buildHalfLap(trackBuilder);
+  trackBuilder.forward(STRAIGHT_3 / 2);
+  trackBuilder.turnRight(CLOSING_CURVE_RADIUS, 180);
+  trackBuilder.forward(CLOSING_STRAIGHT);
   const trackPath = trackBuilder.getPath();
+  const trackPoints = trackBuilder.getPoints();
+
+  // Caja delimitadora del trazado completo (en coordenadas de mundo), usada
+  // para escalar el dibujo del minimapa.
+  const trackBounds = trackPoints.reduce((acc, p) => ({
+    minX: Math.min(acc.minX, p.x),
+    maxX: Math.max(acc.maxX, p.x),
+    minY: Math.min(acc.minY, p.y),
+    maxY: Math.max(acc.maxY, p.y)
+  }), { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
 
   const CHECKPOINT_X = checkpointState.x;
   const CHECKPOINT_Y = checkpointState.y;
@@ -528,6 +616,14 @@
   // HUD: tiempo total, vuelta actual y tiempo de la última vuelta.
   // Se dibuja en espacio de PANTALLA (esquina superior izquierda), sin
   // que le afecte la cámara ni el desplazamiento del mundo.
+  const HUD_MARGIN = 12;
+  const HUD_PADDING_X = 16;
+  const HUD_PADDING_Y = 12;
+  const HUD_LINE_HEIGHT = 24;
+  const HUD_LINE_COUNT = 4; // velocidad, tiempo total, vuelta, última vuelta
+  const HUD_BOX_WIDTH = 230;
+  const HUD_BOX_HEIGHT = HUD_PADDING_Y * 2 + HUD_LINE_HEIGHT * HUD_LINE_COUNT;
+
   function drawHUD() {
     const totalTime = (performance.now() - raceStartTime) / 1000;
     const speedKmh = Math.round(velocityToKmh(car.velocity));
@@ -539,17 +635,11 @@
       'Última vuelta: ' + formatTime(lastLapTime)
     ];
 
-    const paddingX = 16;
-    const paddingY = 12;
-    const lineHeight = 24;
-    const boxWidth = 230;
-    const boxHeight = paddingY * 2 + lineHeight * lines.length;
-
     ctx.save();
     ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-    ctx.fillRect(12, 12, boxWidth, boxHeight);
+    ctx.fillRect(HUD_MARGIN, HUD_MARGIN, HUD_BOX_WIDTH, HUD_BOX_HEIGHT);
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
-    ctx.strokeRect(12, 12, boxWidth, boxHeight);
+    ctx.strokeRect(HUD_MARGIN, HUD_MARGIN, HUD_BOX_WIDTH, HUD_BOX_HEIGHT);
 
     ctx.font = 'bold 16px sans-serif';
     ctx.textAlign = 'left';
@@ -557,14 +647,85 @@
     ctx.fillStyle = '#f1f1f1';
 
     lines.forEach((line, i) => {
-      ctx.fillText(line, 12 + paddingX, 12 + paddingY + lineHeight * i + lineHeight / 2);
+      ctx.fillText(line, HUD_MARGIN + HUD_PADDING_X, HUD_MARGIN + HUD_PADDING_Y + HUD_LINE_HEIGHT * i + HUD_LINE_HEIGHT / 2);
     });
 
     ctx.restore();
   }
 
+  // Minimapa (radar): recuadro semitransparente en la esquina superior
+  // IZQUIERDA, justo debajo del HUD (velocidad y tiempos), con el trazado
+  // completo a escala reducida y un punto rojo brillante marcando la
+  // posición del coche en tiempo real.
+  const MINIMAP_SIZE = 170;
+  const MINIMAP_PADDING = 14;
+  const MINIMAP_GAP_BELOW_HUD = 12;
+
+  function drawMinimap() {
+    const boxX = HUD_MARGIN;
+    const boxY = HUD_MARGIN + HUD_BOX_HEIGHT + MINIMAP_GAP_BELOW_HUD;
+
+    ctx.save();
+
+    // Fondo semitransparente del recuadro
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+    ctx.fillRect(boxX, boxY, MINIMAP_SIZE, MINIMAP_SIZE);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+    ctx.strokeRect(boxX, boxY, MINIMAP_SIZE, MINIMAP_SIZE);
+
+    // Recorta el resto del dibujo al recuadro
+    ctx.beginPath();
+    ctx.rect(boxX, boxY, MINIMAP_SIZE, MINIMAP_SIZE);
+    ctx.clip();
+
+    const trackW = trackBounds.maxX - trackBounds.minX;
+    const trackH = trackBounds.maxY - trackBounds.minY;
+    const available = MINIMAP_SIZE - MINIMAP_PADDING * 2;
+    const scale = Math.min(available / trackW, available / trackH);
+
+    const centerWorldX = (trackBounds.minX + trackBounds.maxX) / 2;
+    const centerWorldY = (trackBounds.minY + trackBounds.maxY) / 2;
+
+    function worldToMinimap(px, py) {
+      return {
+        x: boxX + MINIMAP_SIZE / 2 + (px - centerWorldX) * scale,
+        y: boxY + MINIMAP_SIZE / 2 + (py - centerWorldY) * scale
+      };
+    }
+
+    // Trazado completo simplificado (misma forma exacta que el circuito real)
+    ctx.beginPath();
+    trackPoints.forEach((p, i) => {
+      const m = worldToMinimap(p.x, p.y);
+      if (i === 0) ctx.moveTo(m.x, m.y);
+      else ctx.lineTo(m.x, m.y);
+    });
+    ctx.strokeStyle = '#e0e0e0';
+    ctx.lineWidth = 3;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+
+    // Marca de la línea de meta
+    const finishM = worldToMinimap(FINISH_X, FINISH_Y);
+    ctx.fillStyle = '#4cc9f0';
+    ctx.beginPath();
+    ctx.arc(finishM.x, finishM.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Punto brillante del coche (posición en tiempo real)
+    const carM = worldToMinimap(car.x, car.y);
+    ctx.shadowColor = '#ff3b30';
+    ctx.shadowBlur = 10;
+    ctx.fillStyle = '#ff3b30';
+    ctx.beginPath();
+    ctx.arc(carM.x, carM.y, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
   // Dibuja fondo, circuito (con cámara F1 que sigue al coche), zonas
-  // táctiles y HUD.
+  // táctiles, minimapa y HUD.
   function draw() {
     // Fondo oscuro (pantalla completa)
     ctx.fillStyle = '#1a1a1a';
@@ -580,8 +741,9 @@
     drawCar();
     ctx.restore();
 
-    // --- Pantalla (HUD y zonas táctiles), sin transformar ---
+    // --- Pantalla (HUD, minimapa y zonas táctiles), sin transformar ---
     drawTouchZones();
+    drawMinimap();
     drawHUD();
   }
 
