@@ -39,11 +39,19 @@
   };
 
   // Parámetros de movimiento
-  const ACCELERATION = 0.15;   // aumento de velocidad por frame mientras se acelera
-  const FRICTION = 0.97;       // al soltar, conserva el 97% (pierde solo un 3% por frame -> desliza bastante)
-  const MAX_SPEED = 8;         // velocidad máxima
+  const ACCELERATION = 0.22;   // aumento de velocidad por frame mientras se acelera
+  const FRICTION = 0.985;      // al soltar, conserva el 98.5% (pierde solo un 1.5% por frame -> mucha inercia)
+  const MAX_SPEED = 16;        // velocidad máxima (el doble que antes)
   const MIN_VELOCITY = 0.01;   // umbral para redondear a 0 y evitar decimales infinitos
   const TURN_SPEED = 0.045;    // radianes que gira el coche por frame
+
+  // Conversión de unidades de mundo a km/h para el velocímetro del HUD
+  // (10 unidades de mundo ≈ 1 metro; velocity está en unidades/frame a 60fps)
+  const WORLD_UNITS_PER_METER = 10;
+  function velocityToKmh(velocity) {
+    const metersPerSecond = (velocity * 60) / WORLD_UNITS_PER_METER;
+    return metersPerSecond * 3.6;
+  }
 
   // ===================================================================
   // CIRCUITO (en coordenadas de MUNDO, independientes del tamaño de pantalla)
@@ -56,7 +64,7 @@
   // repite los mismos tramos que la primera, lo que garantiza que se
   // vuelve al punto y ángulo de partida (los giros suman 360° en total
   // y los desplazamientos de cada mitad se cancelan con los de la otra).
-  const TRACK_WIDTH = 280; // ancho del asfalto (~4 coches de 40px + huecos)
+  const TRACK_WIDTH = 320; // ancho del asfalto (aún más ancho: 3-4 coches de sobra)
   const TOTAL_LAPS = 3;
 
   function createTrackBuilder(startX, startY, startHeading) {
@@ -94,7 +102,8 @@
         x = cx + radius * Math.cos(a1);
         y = cy + radius * Math.sin(a1);
       },
-      getPath() { return path; }
+      getPath() { return path; },
+      state() { return { x, y, heading }; }
     };
   }
 
@@ -105,30 +114,48 @@
   const START_Y = 0;
   const START_ANGLE = 0; // apunta "hacia arriba" del mundo
 
-  // Media vuelta del circuito (se recorre dos veces para cerrar el óvalo):
+  // Media vuelta del circuito (se recorre dos veces para cerrar el trazado):
   //   - recta larga para coger velocidad máxima
+  //   - HORQUILLA cerrada (radio pequeño -> hay que frenar con antelación)
+  //   - recta media
   //   - chicane rápida (izquierda-derecha)
   //   - recta media
-  //   - HORQUILLA cerrada de 180° (radio pequeño -> hay que frenar con antelación)
+  //   - curva rápida amplia (cierra el giro neto de la media vuelta a 180°)
   //   - recta media
   //   - chicane rápida (derecha-izquierda, en espejo de la primera)
   //   - recta de enlace con la segunda mitad
   function buildHalfLap(builder) {
-    builder.forward(3000);
-    builder.turnLeft(260, 28);
-    builder.turnRight(260, 28);
-    builder.forward(1400);
-    builder.turnRight(320, 180);
-    builder.forward(1400);
-    builder.turnRight(260, 28);
-    builder.turnLeft(260, 28);
+    builder.forward(3600);
+    builder.turnRight(300, 150);
+    builder.forward(1000);
+    builder.turnLeft(240, 32);
+    builder.turnRight(240, 32);
+    builder.forward(1100);
+    builder.turnRight(650, 30);
+    builder.forward(1000);
+    builder.turnRight(240, 32);
+    builder.turnLeft(240, 32);
     builder.forward(1300);
   }
 
   const trackBuilder = createTrackBuilder(START_X, START_Y, START_ANGLE);
   buildHalfLap(trackBuilder);
+  // Punto de control a mitad del circuito: hay que pasar por aquí antes de
+  // que un cruce de la meta cuente como vuelta completada (ver más abajo).
+  const checkpointState = trackBuilder.state();
   buildHalfLap(trackBuilder);
   const trackPath = trackBuilder.getPath();
+
+  const CHECKPOINT_X = checkpointState.x;
+  const CHECKPOINT_Y = checkpointState.y;
+  const CHECKPOINT_FORWARD = {
+    x: Math.sin(checkpointState.heading),
+    y: -Math.cos(checkpointState.heading)
+  };
+  const CHECKPOINT_PERP = {
+    x: Math.cos(checkpointState.heading),
+    y: Math.sin(checkpointState.heading)
+  };
 
   // Línea de meta: un poco por delante del punto de partida, sobre la
   // primera recta. FINISH_FORWARD es la dirección de circulación en ese
@@ -148,7 +175,9 @@
   let lapStartTime = performance.now();
   let currentLap = 1;
   let lastLapTime = null;   // en segundos, null hasta completar la 1ª vuelta
-  let previousSignedPos = 0; // posición firmada respecto a la línea de meta (ver checkLapCrossing)
+  let previousFinishSignedPos = 0;     // posición firmada respecto a la meta
+  let previousCheckpointSignedPos = 0; // posición firmada respecto al checkpoint
+  let passedCheckpoint = false;        // hay que pasar por aquí antes de que cuente la vuelta
 
   // --- Estado de controles (combinación de teclado + táctil) ---
   const keyboardState = { up: false, left: false, right: false };
@@ -164,11 +193,12 @@
     canvas.height = window.innerHeight;
   }
 
-  // Posición firmada del coche respecto a la línea de meta, medida a lo
-  // largo de la dirección de circulación (FINISH_FORWARD). Negativa =
-  // por detrás de la meta, positiva = por delante.
-  function signedPositionFromFinish(px, py) {
-    return (px - FINISH_X) * FINISH_FORWARD.x + (py - FINISH_Y) * FINISH_FORWARD.y;
+  // Posición firmada de un punto respecto a una referencia (con su propia
+  // dirección "forward"), medida a lo largo de esa dirección de
+  // circulación. Negativa = por detrás de la referencia, positiva = por
+  // delante. Se usa tanto para la meta como para el checkpoint.
+  function signedPositionAlong(px, py, refX, refY, forward) {
+    return (px - refX) * forward.x + (py - refY) * forward.y;
   }
 
   // Coloca el coche en la parrilla de salida
@@ -179,7 +209,9 @@
     car.velocity = 0;
     camera.x = START_X;
     camera.y = START_Y;
-    previousSignedPos = signedPositionFromFinish(START_X, START_Y);
+    previousFinishSignedPos = signedPositionAlong(START_X, START_Y, FINISH_X, FINISH_Y, FINISH_FORWARD);
+    previousCheckpointSignedPos = signedPositionAlong(START_X, START_Y, CHECKPOINT_X, CHECKPOINT_Y, CHECKPOINT_FORWARD);
+    passedCheckpoint = false;
   }
 
   // Zonas de control (se dibujan como guía visual provisional):
@@ -214,27 +246,50 @@
     return { accelerate, left, right };
   }
 
-  // Comprueba si el coche acaba de cruzar la línea de meta en el sentido
-  // de circulación (proyección sobre FINISH_FORWARD pasa de negativa a
-  // positiva) estando dentro del ancho de la pista, y si es así, cierra
-  // la vuelta actual y arranca la siguiente.
-  function checkLapCrossing() {
-    const signedPos = signedPositionFromFinish(car.x, car.y);
-    const lateralOffset = (car.x - FINISH_X) * FINISH_PERP.x + (car.y - FINISH_Y) * FINISH_PERP.y;
-
-    const crossed = previousSignedPos < 0 && signedPos >= 0;
+  // Comprueba si el coche acaba de cruzar el checkpoint (situado a mitad
+  // del circuito) avanzando en el sentido correcto. Si recula y vuelve a
+  // cruzarlo hacia atrás, se anula (hay que volver a pasarlo hacia delante).
+  function checkCheckpointCrossing() {
+    const signedPos = signedPositionAlong(car.x, car.y, CHECKPOINT_X, CHECKPOINT_Y, CHECKPOINT_FORWARD);
+    const lateralOffset = signedPositionAlong(car.x, car.y, CHECKPOINT_X, CHECKPOINT_Y, CHECKPOINT_PERP);
     const withinTrack = Math.abs(lateralOffset) < TRACK_WIDTH / 2;
 
-    if (crossed && withinTrack) {
+    if (withinTrack) {
+      if (previousCheckpointSignedPos < 0 && signedPos >= 0) {
+        passedCheckpoint = true; // cruzado hacia delante: habilita la próxima vuelta
+      } else if (previousCheckpointSignedPos >= 0 && signedPos < 0 && passedCheckpoint) {
+        passedCheckpoint = false; // ha reculado sobre el checkpoint: hay que volver a pasarlo
+      }
+    }
+
+    previousCheckpointSignedPos = signedPos;
+  }
+
+  // Comprueba si el coche acaba de cruzar la línea de meta en el sentido
+  // de circulación correcto (proyección sobre FINISH_FORWARD pasa de
+  // negativa a positiva) estando dentro del ancho de la pista. Solo cuenta
+  // como vuelta si además ya se ha pasado por el checkpoint intermedio
+  // (evita que cuente al arrancar, o si el coche recula sobre la meta).
+  function checkLapCrossing() {
+    checkCheckpointCrossing();
+
+    const signedPos = signedPositionAlong(car.x, car.y, FINISH_X, FINISH_Y, FINISH_FORWARD);
+    const lateralOffset = signedPositionAlong(car.x, car.y, FINISH_X, FINISH_Y, FINISH_PERP);
+
+    const crossedForward = previousFinishSignedPos < 0 && signedPos >= 0;
+    const withinTrack = Math.abs(lateralOffset) < TRACK_WIDTH / 2;
+
+    if (crossedForward && withinTrack && passedCheckpoint) {
       const now = performance.now();
       lastLapTime = (now - lapStartTime) / 1000;
       lapStartTime = now;
       if (currentLap < TOTAL_LAPS) {
         currentLap++;
       }
+      passedCheckpoint = false; // hay que volver a pasar por el checkpoint para la próxima vuelta
     }
 
-    previousSignedPos = signedPos;
+    previousFinishSignedPos = signedPos;
   }
 
   // Actualiza la física del coche (aceleración / fricción / rotación)
@@ -435,13 +490,16 @@
   }
 
   // Dibuja la línea de meta (patrón de cuadros) en coordenadas de MUNDO,
-  // orientada perpendicular a la dirección de circulación en ese punto.
+  // orientada perpendicular a la dirección de circulación en ese punto:
+  // ancha a lo largo de TODO el ancho de la pista (eje lateral) y fina en
+  // el sentido de circulación, para que se vea como una línea horizontal
+  // cruzando la recta principal de lado a lado.
   function drawFinishLine() {
-    const lineWidthPx = 26;
-    const cols = 3;
-    const rows = 10;
-    const cellW = lineWidthPx / cols;
-    const cellH = TRACK_WIDTH / rows;
+    const lineDepth = 26; // grosor de la línea en el sentido de circulación
+    const cols = 10;      // divisiones a lo ancho de la pista
+    const rows = 3;       // divisiones en el grosor de la línea
+    const cellW = TRACK_WIDTH / cols;
+    const cellH = lineDepth / rows;
 
     ctx.save();
     ctx.translate(FINISH_X, FINISH_Y);
@@ -451,7 +509,7 @@
       for (let col = 0; col < cols; col++) {
         const isBlack = (row + col) % 2 === 0;
         ctx.fillStyle = isBlack ? '#111111' : '#f5f5f5';
-        ctx.fillRect(-lineWidthPx / 2 + col * cellW, -TRACK_WIDTH / 2 + row * cellH, cellW, cellH);
+        ctx.fillRect(-TRACK_WIDTH / 2 + col * cellW, -lineDepth / 2 + row * cellH, cellW, cellH);
       }
     }
 
@@ -472,8 +530,10 @@
   // que le afecte la cámara ni el desplazamiento del mundo.
   function drawHUD() {
     const totalTime = (performance.now() - raceStartTime) / 1000;
+    const speedKmh = Math.round(velocityToKmh(car.velocity));
 
     const lines = [
+      'Velocidad: ' + speedKmh + ' km/h',
       'Tiempo Total: ' + formatTime(totalTime),
       'Vuelta: ' + currentLap + '/' + TOTAL_LAPS,
       'Última vuelta: ' + formatTime(lastLapTime)
