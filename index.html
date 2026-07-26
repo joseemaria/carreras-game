@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Juego de Carreras</title>
+<title>Circuito del Jarama</title>
 <style>
   html, body {
     margin: 0;
@@ -41,7 +41,7 @@
   // Parámetros de movimiento
   const ACCELERATION = 0.22;   // aumento de velocidad por frame mientras se acelera
   const FRICTION = 0.985;      // al soltar, conserva el 98.5% (pierde solo un 1.5% por frame -> mucha inercia)
-  const MAX_SPEED = 16;        // velocidad máxima (el doble que antes)
+  const MAX_SPEED = 16;        // velocidad máxima
   const MIN_VELOCITY = 0.01;   // umbral para redondear a 0 y evitar decimales infinitos
   const TURN_SPEED = 0.045;    // radianes que gira el coche por frame
 
@@ -53,17 +53,12 @@
     return metersPerSecond * 3.6;
   }
 
-  // ===================================================================
-  // CIRCUITO (en coordenadas de MUNDO, independientes del tamaño de pantalla)
-  // ===================================================================
-  // El trazado se construye "a lo tortuga": partiendo de un punto y una
-  // dirección, se van encadenando tramos rectos (forward) y giros con
-  // radio (turnLeft/turnRight, en grados). Esto permite diseñar un
-  // circuito técnico (horquillas de 180°, chicanes, rectas largas) y
-  // que el trazado cierre EXACTAMENTE: la segunda mitad del circuito
-  // repite los mismos tramos que la primera, lo que garantiza que se
-  // vuelve al punto y ángulo de partida (los giros suman 360° en total
-  // y los desplazamientos de cada mitad se cancelan con los de la otra).
+  // Punto y ángulo de partida: recta larga desde la meta, avanzando
+  // hacia la derecha (heading = 90°). Aquí está la línea de meta.
+  const START_X = 0;
+  const START_Y = 0;
+  const START_ANGLE = Math.PI / 2;
+
   const TRACK_WIDTH = 320; // ancho del asfalto (3-4 coches de sobra)
   const TOTAL_LAPS = 3;
 
@@ -123,105 +118,51 @@
     };
   }
 
-  // Turtle "ligero" (sin Path2D) usado solo para PRECALCULAR, antes de
-  // construir el trazado real, el radio exacto de la horquilla y la
-  // longitud del tramo de cierre que hacen que el circuito cierre
-  // matemáticamente sobre el punto de partida (ver más abajo).
-  function dryTurtle(startX, startY, startHeading) {
-    let x = startX, y = startY, heading = startHeading;
-    return {
-      forward(d) { x += Math.sin(heading) * d; y -= Math.cos(heading) * d; },
-      turnRight(r, deg) {
-        const delta = deg * Math.PI / 180;
-        const cx = x + r * Math.cos(heading), cy = y + r * Math.sin(heading);
-        const a1 = heading + Math.PI + delta;
-        heading += delta; x = cx + r * Math.cos(a1); y = cy + r * Math.sin(a1);
-      },
-      turnLeft(r, deg) {
-        const delta = deg * Math.PI / 180;
-        const cx = x - r * Math.cos(heading), cy = y - r * Math.sin(heading);
-        const a1 = heading - delta;
-        heading -= delta; x = cx + r * Math.cos(a1); y = cy + r * Math.sin(a1);
-      },
-      state() { return { x, y, heading }; }
-    };
-  }
-
-  // Punto y ángulo de partida: recta larga desde la meta, avanzando
-  // hacia la derecha (heading = 90°). Aquí está la línea de meta.
-  const START_X = 0;
-  const START_Y = 0;
-  const START_ANGLE = Math.PI / 2;
-
-  // --- Medidas del circuito (escala grande: ~1 minuto por vuelta a ritmo
-  // realista, teniendo en cuenta que hay que frenar en las 3 curvas) ---
-  const STRAIGHT_1 = 11500;      // 1. recta larga desde la meta
-  const STRAIGHT_2 = 8000;       // tramo lateral tras la 1ª curva
-  const STRAIGHT_3 = 11500;      // recta larga de vuelta (se parte en dos por el checkpoint)
-  const TURN_1_RADIUS = 1200;    // 2. curva con pequeño quiebro técnico
-  const TURN_2_RADIUS = 1500;    // curva amplia con chicane ondulado
-  const KINK_RADIUS = 400;       // radio del quiebro de la curva 2
-  const KINK_ANGLE = 15;         // ángulo del quiebro de la curva 2
-  const CHICANE_RADIUS = 500;    // radio del chicane ondulado (curva 3)
-  const CHICANE_ANGLE = 20;      // ángulo del chicane ondulado
-
-  // El radio de la curva de cierre y la recta final se PRECALCULAN para
-  // que el trazado, tal cual lo hemos diseñado a mano, cierre de forma
-  // exacta sobre el punto de partida (comprobado numéricamente: el error
-  // de cierre resultante es del orden de 10⁻¹³, pura precisión de coma
-  // flotante).
-  function precomputeClosure() {
-    const t1 = dryTurtle(START_X, START_Y, START_ANGLE);
-    t1.forward(STRAIGHT_1);
-    t1.turnRight(TURN_1_RADIUS, 90);
-    t1.turnLeft(KINK_RADIUS, KINK_ANGLE);
-    t1.turnRight(KINK_RADIUS, KINK_ANGLE);
-    t1.forward(STRAIGHT_2);
-    t1.turnRight(TURN_2_RADIUS, 90);
-    t1.turnRight(CHICANE_RADIUS, CHICANE_ANGLE);
-    t1.turnLeft(CHICANE_RADIUS, CHICANE_ANGLE);
-    t1.forward(STRAIGHT_3);
-    const beforeClosingCurve = t1.state(); // heading = -90° (270°) aquí
-
-    // El giro de 180° desplaza la Y en -2*radio; resolvemos el radio que
-    // hace que la Y vuelva exactamente a la del punto de partida.
-    const closingCurveRadius = beforeClosingCurve.y / 2;
-
-    const t2 = dryTurtle(beforeClosingCurve.x, beforeClosingCurve.y, beforeClosingCurve.heading);
-    t2.turnRight(closingCurveRadius, 180);
-    const afterClosingCurve = t2.state(); // Y ya coincide con START_Y aquí
-
-    // Solo queda por cerrar la X: una última recta (según el ángulo real)
-    const closingStraight = (START_X - afterClosingCurve.x) / Math.sin(afterClosingCurve.heading);
-
-    return { closingCurveRadius, closingStraight };
-  }
-
-  const { closingCurveRadius: CLOSING_CURVE_RADIUS, closingStraight: CLOSING_STRAIGHT } = precomputeClosure();
-
-  // --- Construcción real del trazado (Path2D + puntos para el minimapa) ---
-  //   1. Meta y recta larga
-  //   2. Curva con pequeño quiebro técnico (obliga a levantar el pie con antelación)
-  //   3. Tramo lateral
-  //   4. Curva amplia con chicane ondulado (revirado, tipo "S")
-  //   5. Recta larga de vuelta
-  //   6. Curva amplia de cierre que reconecta con la recta de meta
+  // ===================================================================
+  // CIRCUITO DEL JARAMA (Madrid) — reconstrucción estilizada
+  // ===================================================================
+  // Sentido horario. Curvas, en orden: Nuvolari + Fangio (pequeño quiebro
+  // justo tras la meta), Varzi, Le Mans, Farina, Pegaso (+ rampa bajo el
+  // puente), Ascari, Portago (frenada fuerte), las eses de Bugatti (aquí
+  // como un lazo/gancho cerrado, tal como se aprecia en el plano de
+  // referencia), Monza y, por último, María de Villota, que cierra el
+  // circuito reconectando con la recta de meta. Los radios/longitudes
+  // son una aproximación estilizada inspirada en la secuencia real y en
+  // la silueta de la imagen de referencia (no un plano topográfico
+  // milimétrico), ajustada para que el trazado cierre matemáticamente de
+  // forma exacta sobre el punto de partida (comprobado numéricamente:
+  // error de cierre del orden de 10⁻⁹).
   const trackBuilder = createTrackBuilder(START_X, START_Y, START_ANGLE);
-  trackBuilder.forward(STRAIGHT_1);
-  trackBuilder.turnRight(TURN_1_RADIUS, 90);
-  trackBuilder.turnLeft(KINK_RADIUS, KINK_ANGLE);
-  trackBuilder.turnRight(KINK_RADIUS, KINK_ANGLE);
-  trackBuilder.forward(STRAIGHT_2);
-  trackBuilder.turnRight(TURN_2_RADIUS, 90);
-  trackBuilder.turnRight(CHICANE_RADIUS, CHICANE_ANGLE);
-  trackBuilder.turnLeft(CHICANE_RADIUS, CHICANE_ANGLE);
-  trackBuilder.forward(STRAIGHT_3 / 2);
+  trackBuilder.forward(6881.210836435495);          // gran recta de meta
+  trackBuilder.turnLeft(500, 20);                    // Nuvolari + Fangio (quiebro tras meta)
+  trackBuilder.forward(700);
+  trackBuilder.turnRight(400, 70);                   // Varzi
+  trackBuilder.forward(500);
+  trackBuilder.turnLeft(250, 55);                    // Le Mans
+  trackBuilder.forward(400);
+  trackBuilder.turnRight(350, 60);                   // Farina
+  trackBuilder.forward(400);
+  trackBuilder.turnLeft(400, 65);                    // Pegaso
+  trackBuilder.forward(1500);                        // rampa Pegaso
+  trackBuilder.turnRight(500, 85);                   // Ascari
+  trackBuilder.forward(1200);
+  trackBuilder.turnRight(250, 120);                  // Portago (frenada fuerte)
+  trackBuilder.forward(11075.655938779739 / 2);
   // Punto de control a mitad del circuito (por longitud recorrida): hay
   // que pasar por aquí antes de que un cruce de la meta cuente como vuelta.
   const checkpointState = trackBuilder.state();
-  trackBuilder.forward(STRAIGHT_3 / 2);
-  trackBuilder.turnRight(CLOSING_CURVE_RADIUS, 180);
-  trackBuilder.forward(CLOSING_STRAIGHT);
+  trackBuilder.forward(11075.655938779739 / 2);
+  trackBuilder.turnLeft(300, 80);                    // Bugatti 1 (lazo cerrado)
+  trackBuilder.forward(250);
+  trackBuilder.turnRight(250, 30);                   // Bugatti 2
+  trackBuilder.forward(250);
+  trackBuilder.turnLeft(300, 60);                    // Bugatti 3 (cierra el lazo)
+  trackBuilder.forward(700);
+  trackBuilder.turnRight(400, 75);                   // Monza 1
+  trackBuilder.forward(400);
+  trackBuilder.turnRight(400, 110);                  // Monza 2
+  trackBuilder.forward(800);
+  trackBuilder.turnRight(600, 90);                   // María de Villota (cierra el circuito)
   const trackPath = trackBuilder.getPath();
   const trackPoints = trackBuilder.getPoints();
 
@@ -542,9 +483,7 @@
   }
 
   // Dibuja el circuito completo en coordenadas de MUNDO: asfalto ancho,
-  // pianos rojo/blanco en ambos bordes (siguiendo cada curva, incluidas
-  // las horquillas y chicanes) y línea de meta. El trazado (trackPath) se
-  // construyó una sola vez al cargar la página; aquí solo se traza.
+  // pianos rojo/blanco en ambos bordes (siguiendo cada curva) y línea de meta.
   function drawTrack() {
     const curbExtra = 14; // cuánto sobresale el piano a cada lado del asfalto
     const dash = 90;      // longitud de cada segmento rojo/blanco del piano
@@ -613,9 +552,9 @@
     return String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0') + '.' + tenths;
   }
 
-  // HUD: tiempo total, vuelta actual y tiempo de la última vuelta.
-  // Se dibuja en espacio de PANTALLA (esquina superior izquierda), sin
-  // que le afecte la cámara ni el desplazamiento del mundo.
+  // HUD: velocidad, tiempo total, vuelta actual y tiempo de la última
+  // vuelta. Se dibuja en espacio de PANTALLA (esquina superior izquierda),
+  // sin que le afecte la cámara ni el desplazamiento del mundo.
   const HUD_MARGIN = 12;
   const HUD_PADDING_X = 16;
   const HUD_PADDING_Y = 12;
