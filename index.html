@@ -327,7 +327,23 @@
   // de velocidad normal al muro (rebote real, no un simple "stop").
   const WALL_COLLISION_RADIUS = carWidth / 2 + 6;
   const WALL_BOUNCE = 0.5; // factor de restitución del rebote
+  const WALLS_UNLOCK_CHECKPOINTS = 2; // nº de checkpoints (de 3) a partir del cual se abre la barrera
+
+  // La barrera solo está activa (sólida) al PRINCIPIO de la vuelta, mientras
+  // el coche todavía no ha acumulado los checkpoints necesarios. En cuanto
+  // se alcanza el penúltimo checkpoint (2/3), se considera que el coche ya
+  // ha completado el trazado oficial y va camino de la meta, así que el
+  // tramo se abre automáticamente para dejarle pasar y cruzar la línea.
+  // Al cruzar la meta los checkpoints se resetean a 0/3 (ver
+  // checkLapCrossing), lo que vuelve a cerrar la barrera para la vuelta
+  // siguiente sin necesidad de ningún código adicional aquí.
+  function areWallsActive() {
+    const passedCount = checkpointsPassed.filter(Boolean).length;
+    return passedCount < WALLS_UNLOCK_CHECKPOINTS;
+  }
+
   function resolveWallCollisions() {
+    if (!areWallsActive()) return; // barrera abierta: no hay colisión que resolver
     for (const wall of WALLS) {
       const cp = closestPointOnSegment(car.x, car.y, wall.x1, wall.y1, wall.x2, wall.y2);
       let dx = car.x - cp.x;
