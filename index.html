@@ -1,3 +1,26 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Circuito del Jarama</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: #111;
+    touch-action: none;
+  }
+  canvas {
+    display: block;
+    touch-action: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+
 <script>
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
@@ -220,96 +243,24 @@
   const gridBack = pointAlongStraight(-GRID_BEHIND_DISTANCE);
   const straightEnd = pointAlongStraight(STRAIGHT_WALL_END);
 
-  // --- BARRERAS DINÁMICAS SEGÚN CHECKPOINTS (IDA / VUELTA) ---
-  // Se elimina el concepto de "paredes fijas" y se sustituye por dos
-  // barreras dinámicas que se activan/desactivan según el estado de los checkpoints.
-  // 
-  // 1) BARRERA ROJA (IDA): bloquea el paso a la derecha de la recta de meta
-  //    mientras el coche no haya pasado ningún checkpoint (checkpointsPassed[0] == false).
-  //    Esto evita que el coche gire a la derecha nada más salir, obligándolo a ir hacia la izquierda (curva Nuvolari).
-  //    Se desactiva en cuanto se cruza el checkpoint 1, permitiendo así acceder a la zona de boxes/recorrido oficial.
-  // 2) BARRERA AZUL (VUELTA): bloquea la mediana (entre los dos carriles de la izquierda,
-  //    en el tramo de la izquierda del circuito, donde están los checkpoints 2 y 3).
-  //    Se activa cuando se han pasado exactamente 2 checkpoints (checkpointsPassed[0] y [1] son true, [2] false).
-  //    Esto obliga al coche a mantenerse en el carril derecho (el carril de vuelta) y no cortar la chicana.
-  //    Se desactiva en cuanto se cruza el checkpoint 3, permitiendo el acceso a la meta.
-  
-  const WALL_COLLISION_RADIUS = carWidth / 2 + 6;
-  const WALL_BOUNCE = 0.5; // factor de restitución del rebote
-
-  function getDynamicWalls() {
-    const passedCount = checkpointsPassed.filter(Boolean).length;
-    let activeWalls = [];
-
-    // BARRERA ROJA (IDA): activa si no se ha pasado el checkpoint 1 (es decir, 0 checkpoints)
-    if (passedCount === 0) {
-      // Misma geometría que la pared lateral derecha original, pero ahora es dinámica.
-      // Se activa solo al inicio de la vuelta, cuando aún no se ha pasado el checkpoint 1.
-      const wall1 = {
-        x1: gridBack.x + WALL_LATERAL_OFFSET * FINISH_PERP.x,
-        y1: gridBack.y + WALL_LATERAL_OFFSET * FINISH_PERP.y,
-        x2: straightEnd.x + WALL_LATERAL_OFFSET * FINISH_PERP.x,
-        y2: straightEnd.y + WALL_LATERAL_OFFSET * FINISH_PERP.y,
-        color: 'red'
-      };
-      // Pared trasera para evitar dar la vuelta (también roja, ya que es parte de la "ida")
-      const wall2 = {
-        x1: gridBack.x - WALL_LATERAL_OFFSET * FINISH_PERP.x,
-        y1: gridBack.y - WALL_LATERAL_OFFSET * FINISH_PERP.y,
-        x2: gridBack.x + WALL_LATERAL_OFFSET * FINISH_PERP.x,
-        y2: gridBack.y + WALL_LATERAL_OFFSET * FINISH_PERP.y,
-        color: 'red'
-      };
-      activeWalls.push(wall1, wall2);
+  const WALLS = [
+    // Pared lateral derecha: recorre toda la recta de meta impidiendo
+    // desviarse a la derecha del trazado oficial.
+    {
+      x1: gridBack.x + WALL_LATERAL_OFFSET * FINISH_PERP.x,
+      y1: gridBack.y + WALL_LATERAL_OFFSET * FINISH_PERP.y,
+      x2: straightEnd.x + WALL_LATERAL_OFFSET * FINISH_PERP.x,
+      y2: straightEnd.y + WALL_LATERAL_OFFSET * FINISH_PERP.y
+    },
+    // Pared trasera: cierra el hueco justo detrás de la parrilla, para que
+    // no se pueda dar la vuelta y salir marcha atrás del circuito.
+    {
+      x1: gridBack.x - WALL_LATERAL_OFFSET * FINISH_PERP.x,
+      y1: gridBack.y - WALL_LATERAL_OFFSET * FINISH_PERP.y,
+      x2: gridBack.x + WALL_LATERAL_OFFSET * FINISH_PERP.x,
+      y2: gridBack.y + WALL_LATERAL_OFFSET * FINISH_PERP.y
     }
-
-    // BARRERA AZUL (VUELTA): activa si se han pasado exactamente 2 checkpoints (0 y 1 sí, 2 no)
-    if (passedCount === 2) {
-      // La mediana a bloquear se encuentra en el tramo de la izquierda del circuito,
-      // entre el checkpoint 2 y el checkpoint 3. Se coloca una barrera en el centro de ese tramo
-      // para evitar que el coche corte la chicana.
-      // Calculamos un punto intermedio en el segmento entre el checkpoint 2 y el checkpoint 3.
-      const cp2 = CHECKPOINTS[1]; // checkpoint 2 (índice 1)
-      const cp3 = CHECKPOINTS[2]; // checkpoint 3 (índice 2)
-      
-      // Vector desde cp2 a cp3
-      const dx = cp3.x - cp2.x;
-      const dy = cp3.y - cp2.y;
-      const len = Math.hypot(dx, dy);
-      if (len > 0.001) {
-        const nx = dx / len;
-        const ny = dy / len;
-        // Punto medio entre cp2 y cp3
-        const midX = (cp2.x + cp3.x) / 2;
-        const midY = (cp2.y + cp3.y) / 2;
-        
-        // La mediana es una barrera perpendicular a la dirección de avance, que cruza el carril.
-        // La dirección perpendicular al avance (para la barrera) es (-ny, nx).
-        const perpX = -ny;
-        const perpY = nx;
-        
-        // Longitud de la barrera: cubre el ancho de un carril (aprox la mitad del ancho de pista)
-        const barrierLength = TRACK_WIDTH * 0.6; // lo suficientemente larga para bloquear el corte
-        
-        // Puntos de la barrera
-        const halfLen = barrierLength / 2;
-        const p1x = midX + perpX * halfLen;
-        const p1y = midY + perpY * halfLen;
-        const p2x = midX - perpX * halfLen;
-        const p2y = midY - perpY * halfLen;
-        
-        activeWalls.push({
-          x1: p1x,
-          y1: p1y,
-          x2: p2x,
-          y2: p2y,
-          color: 'blue'
-        });
-      }
-    }
-
-    return activeWalls;
-  }
+  ];
 
   // --- Cámara (sigue al coche suavemente, tipo F1 on-board) ---
   const camera = { x: START_X, y: START_Y };
@@ -371,12 +322,29 @@
     return minDist;
   }
 
-  // Resuelve colisiones contra las paredes dinámicas: si el coche invade
+  // Resuelve colisiones contra las paredes invisibles: si el coche invade
   // una pared, lo empuja fuera de ella y refleja físicamente la componente
   // de velocidad normal al muro (rebote real, no un simple "stop").
+  const WALL_COLLISION_RADIUS = carWidth / 2 + 6;
+  const WALL_BOUNCE = 0.5; // factor de restitución del rebote
+  const WALLS_UNLOCK_CHECKPOINTS = 2; // nº de checkpoints (de 3) a partir del cual se abre la barrera
+
+  // La barrera solo está activa (sólida) al PRINCIPIO de la vuelta, mientras
+  // el coche todavía no ha acumulado los checkpoints necesarios. En cuanto
+  // se alcanza el penúltimo checkpoint (2/3), se considera que el coche ya
+  // ha completado el trazado oficial y va camino de la meta, así que el
+  // tramo se abre automáticamente para dejarle pasar y cruzar la línea.
+  // Al cruzar la meta los checkpoints se resetean a 0/3 (ver
+  // checkLapCrossing), lo que vuelve a cerrar la barrera para la vuelta
+  // siguiente sin necesidad de ningún código adicional aquí.
+  function areWallsActive() {
+    const passedCount = checkpointsPassed.filter(Boolean).length;
+    return passedCount < WALLS_UNLOCK_CHECKPOINTS;
+  }
+
   function resolveWallCollisions() {
-    const activeWalls = getDynamicWalls();
-    for (const wall of activeWalls) {
+    if (!areWallsActive()) return; // barrera abierta: no hay colisión que resolver
+    for (const wall of WALLS) {
       const cp = closestPointOnSegment(car.x, car.y, wall.x1, wall.y1, wall.x2, wall.y2);
       let dx = car.x - cp.x;
       let dy = car.y - cp.y;
@@ -549,7 +517,8 @@
     car.x += Math.sin(car.angle) * car.velocity;
     car.y -= Math.cos(car.angle) * car.velocity;
 
-    // Paredes dinámicas: rebote físico según el estado de los checkpoints
+    // Paredes invisibles: rebote físico si intenta desviarse a la derecha
+    // de la recta de meta o dar la vuelta detrás de la parrilla.
     resolveWallCollisions();
 
     // Cámara: sigue al coche con suavizado (interpolación lineal)
@@ -606,7 +575,7 @@
   }
 
   // Dibuja el coche: deportivo visto desde arriba (ruedas, carrocería,
-  // parabrisas, alerón). Todo se dibuja  en coordenadas locales centradas
+  // parabrisas, alerón). Todo se dibuja en coordenadas locales centradas
   // en (0,0), con el frente apuntando hacia -y; luego se traslada/rota
   // según la posición y el ángulo reales del coche EN EL MUNDO (el
   // llamador ya habrá aplicado el desplazamiento de cámara antes de esto).
@@ -712,7 +681,6 @@
 
   // Dibuja el circuito completo en coordenadas de MUNDO: asfalto ancho,
   // pianos rojo/blanco en ambos bordes (siguiendo cada curva) y línea de meta.
-  // NOTA: Se han eliminado las líneas discontinuas del centro de la pista.
   function drawTrack() {
     const curbExtra = 14; // cuánto sobresale el piano a cada lado del asfalto
     const dash = 90;      // longitud de cada segmento rojo/blanco del piano
@@ -1020,3 +988,5 @@
   initCar();
   gameLoop();
 </script>
+</body>
+</html>
