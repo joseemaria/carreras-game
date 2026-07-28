@@ -46,7 +46,6 @@
   const OFFTRACK_TURN_SPEED = TURN_SPEED * (1 - OFFTRACK_GRIP_LOSS);
   const OFFTRACK_FRICTION = 0.965;
   
-  // Tolerancia para morder el borde del asfalto/hierba
   const OFFTRACK_TOLERANCE = 35; 
   let isCarOffTrack = false;
 
@@ -111,8 +110,8 @@
           points.push({ x: cx - radius * Math.cos(a), y: cy - radius * Math.sin(a) });
         }
         heading -= delta;
-        x = cx + radius * Math.cos(a1);
-        y = cy + radius * Math.sin(a1);
+        x = cx - radius * Math.cos(a1);
+        y = cy - radius * Math.sin(a1);
       },
       getPath() { return path; },
       getPoints() { return points; },
@@ -189,31 +188,29 @@
   const WALL_COLLISION_RADIUS = carWidth / 2 + 6;
   const WALL_BOUNCE = 0.5;
 
-  // BARRERAS INVISIBLES A AMBOS LADOS EN LA ZONA QUE SEÑALAS CON EL RATÓN
   function getDynamicWalls() {
     const passedCount = checkpointsPassed.filter(Boolean).length;
     let activeWalls = [];
 
-    // Se activan al tener los checkpoints pasados (2 o 3 pasados en la vuelta)
-    if (passedCount >= 2) {
+    if (passedCount === 3) {
       const cp2 = CHECKPOINTS[1];
       const cp3 = CHECKPOINTS[2];
 
-      // Pared 1: Lado superior de la mediana/isla interior
-      activeWalls.push({
-        x1: cp2.x - cp2.perp.x * (TRACK_WIDTH / 2 + 10),
-        y1: cp2.y - cp2.perp.y * (TRACK_WIDTH / 2 + 10),
-        x2: cp3.x - cp3.perp.x * (TRACK_WIDTH / 2 + 10),
-        y2: cp3.y - cp3.perp.y * (TRACK_WIDTH / 2 + 10)
-      });
+      if (cp2 && cp3) {
+        activeWalls.push({
+          x1: cp2.x,
+          y1: cp2.y,
+          x2: cp3.x,
+          y2: cp3.y
+        });
 
-      // Pared 2: Lado inferior / bloqueo central para no cruzar a la meta atajando
-      activeWalls.push({
-        x1: cp3.x,
-        y1: cp3.y,
-        x2: FINISH_X - FINISH_PERP.x * (TRACK_WIDTH / 2 + 20),
-        y2: FINISH_Y - FINISH_PERP.y * (TRACK_WIDTH / 2 + 20)
-      });
+        activeWalls.push({
+          x1: cp3.x,
+          y1: cp3.y,
+          x2: FINISH_X - FINISH_PERP.x * (TRACK_WIDTH / 2 + 20),
+          y2: FINISH_Y - FINISH_PERP.y * (TRACK_WIDTH / 2 + 20)
+        });
+      }
     }
 
     return activeWalls;
@@ -267,8 +264,9 @@
     canvas.height = window.innerHeight;
   }
 
-  function signedPositionAlong(px, py, refX, refY, forward) {
-    return (px - refX) * forward.x + (py - refY) * forward.y;
+  function signedPositionAlong(px, py, refX, refY, forwardVec) {
+    if (!forwardVec) return 0;
+    return (px - refX) * forwardVec.x + (py - refY) * forwardVec.y;
   }
 
   function closestPointOnSegment(px, py, ax, ay, bx, by) {
@@ -301,7 +299,9 @@
     camera.y = START_Y;
     previousFinishSignedPos = signedPositionAlong(START_X, START_Y, FINISH_X, FINISH_Y, FINISH_FORWARD);
     CHECKPOINTS.forEach(cp => {
-      cp.prevSignedPos = signedPositionAlong(START_X, START_Y, cp.x, cp.y, cp.forward);
+      if (cp) {
+        cp.prevSignedPos = signedPositionAlong(START_X, START_Y, cp.x, cp.y, cp.forward);
+      }
     });
     checkpointsPassed = [false, false, false];
   }
@@ -334,6 +334,7 @@
 
   function checkCheckpointsCrossing() {
     CHECKPOINTS.forEach((cp, i) => {
+      if (!cp) return;
       const signedPos = signedPositionAlong(car.x, car.y, cp.x, cp.y, cp.forward);
       const lateralOffset = signedPositionAlong(car.x, car.y, cp.x, cp.y, cp.perp);
       const withinTrack = Math.abs(lateralOffset) < TRACK_WIDTH / 2;
@@ -356,7 +357,7 @@
     checkCheckpointsCrossing();
 
     const signedPos = signedPositionAlong(car.x, car.y, FINISH_X, FINISH_Y, FINISH_FORWARD);
-    const lateralOffset = signedPositionAlong(car.x, car.y, FINISH_X, FINISH_PERP);
+    const lateralOffset = signedPositionAlong(car.x, car.y, FINISH_X, FINISH_Y, FINISH_PERP);
 
     const crossedForward = previousFinishSignedPos < 0 && signedPos >= 0;
     const withinTrack = Math.abs(lateralOffset) < TRACK_WIDTH / 2;
@@ -382,7 +383,6 @@
     const turningLeft = keyboardState.left || touch.left;
     const turningRight = keyboardState.right || touch.right;
 
-    // Detección fuera de pista
     const distFromCenter = distanceToTrackCenterline(car.x, car.y);
     isCarOffTrack = distFromCenter > (TRACK_WIDTH / 2 + OFFTRACK_TOLERANCE);
 
@@ -641,7 +641,6 @@
     ctx.fillText(lastLapText, HUD_MARGIN + HUD_PADDING_X, y); y += HUD_LINE_HEIGHT;
     ctx.fillText(checkpointsText, HUD_MARGIN + HUD_PADDING_X, y); y += HUD_LINE_HEIGHT;
 
-    // Texto en AMARILLO cuando está fuera de pista
     ctx.fillStyle = isCarOffTrack ? '#ffea00' : '#4cc9f0';
     ctx.fillText(surfaceText, HUD_MARGIN + HUD_PADDING_X, y);
 
