@@ -25,12 +25,9 @@
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
-  // Dimensiones del coche
   const carWidth = 40;
   const carHeight = 70;
 
-  // Estado del coche (x,y = centro del coche EN COORDENADAS DE MUNDO;
-  // angle en radianes, 0 = apuntando "hacia arriba" del mundo)
   const car = {
     x: 0,
     y: 0,
@@ -38,44 +35,34 @@
     velocity: 0
   };
 
-  // Parámetros de movimiento
-  const ACCELERATION = 0.22;   // aumento de velocidad por frame mientras se acelera
-  const FRICTION = 0.985;      // al soltar, conserva el 98.5% (pierde solo un 1.5% por frame -> mucha inercia)
-  const MAX_SPEED = 16;        // velocidad máxima (asfalto)
-  const MIN_VELOCITY = 0.01;   // umbral para redondear a 0 y evitar decimales infinitos
-  const TURN_SPEED = 0.045;    // radianes que gira el coche por frame (asfalto)
+  const ACCELERATION = 0.22;
+  const FRICTION = 0.985;
+  const MAX_SPEED = 16;
+  const MIN_VELOCITY = 0.01;
+  const TURN_SPEED = 0.045;
 
-  // --- Física de arena/hierba (fuera de pista) ---
-  // Al salirse del asfalto, el coche NO se bloquea ni se sanciona: simplemente
-  // pierde un 60% de velocidad máxima y de agarre (dirección menos precisa,
-  // sensación de derrape), pero siempre puede seguir avanzando.
-  const OFFTRACK_GRIP_LOSS = 0.6;                    // -60% de agarre/velocidad máxima
+  const OFFTRACK_GRIP_LOSS = 0.6;
   const OFFTRACK_MAX_SPEED = MAX_SPEED * (1 - OFFTRACK_GRIP_LOSS);
   const OFFTRACK_TURN_SPEED = TURN_SPEED * (1 - OFFTRACK_GRIP_LOSS);
-  const OFFTRACK_FRICTION = 0.965;                   // algo más de resistencia a rodar sobre arena/hierba
+  const OFFTRACK_FRICTION = 0.965;
+  
+  // Tolerancia para morder el borde del asfalto/hierba
+  const OFFTRACK_TOLERANCE = 35; 
   let isCarOffTrack = false;
 
-  // Conversión de unidades de mundo a km/h para el velocímetro del HUD
-  // (10 unidades de mundo ≈ 1 metro; velocity está en unidades/frame a 60fps)
   const WORLD_UNITS_PER_METER = 10;
   function velocityToKmh(velocity) {
     const metersPerSecond = (velocity * 60) / WORLD_UNITS_PER_METER;
     return metersPerSecond * 3.6;
   }
 
-  // Punto y ángulo de partida: recta larga desde la meta, avanzando
-  // hacia la derecha (heading = 90°). Aquí está la línea de meta.
   const START_X = 0;
   const START_Y = 0;
   const START_ANGLE = Math.PI / 2;
 
-  const TRACK_WIDTH = 320; // ancho del asfalto (3-4 coches de sobra)
+  const TRACK_WIDTH = 320;
   const TOTAL_LAPS = 3;
 
-  // El builder registra tanto el PATH real (para dibujar el asfalto) como
-  // una lista de puntos muestreados (incluidos puntos a lo largo de cada
-  // curva) que se usará tanto para el minimapa como para calcular la
-  // distancia del coche al eje de la pista (detección de arena/hierba).
   function createTrackBuilder(startX, startY, startHeading) {
     let x = startX;
     let y = startY;
@@ -86,10 +73,14 @@
 
     return {
       forward(distance) {
-        x += Math.sin(heading) * distance;
-        y -= Math.cos(heading) * distance;
-        path.lineTo(x, y);
-        points.push({ x, y });
+        const steps = Math.max(1, Math.round(distance / 40));
+        const stepDist = distance / steps;
+        for (let i = 0; i < steps; i++) {
+          x += Math.sin(heading) * stepDist;
+          y -= Math.cos(heading) * stepDist;
+          path.lineTo(x, y);
+          points.push({ x, y });
+        }
       },
       turnRight(radius, degrees) {
         const delta = degrees * Math.PI / 180;
@@ -98,7 +89,7 @@
         const a0 = heading + Math.PI;
         const a1 = a0 + delta;
         path.arc(cx, cy, radius, a0, a1, false);
-        const steps = Math.max(4, Math.round(Math.abs(degrees) / 10));
+        const steps = Math.max(8, Math.round(Math.abs(degrees) / 4));
         for (let i = 1; i <= steps; i++) {
           const a = a0 + (delta * i) / steps;
           points.push({ x: cx + radius * Math.cos(a), y: cy + radius * Math.sin(a) });
@@ -114,10 +105,10 @@
         const a0 = heading;
         const a1 = a0 - delta;
         path.arc(cx, cy, radius, a0, a1, true);
-        const steps = Math.max(4, Math.round(Math.abs(degrees) / 10));
+        const steps = Math.max(8, Math.round(Math.abs(degrees) / 4));
         for (let i = 1; i <= steps; i++) {
           const a = a0 - (delta * i) / steps;
-          points.push({ x: cx + radius * Math.cos(a), y: cy + radius * Math.sin(a) });
+          points.push({ x: cx - radius * Math.cos(a), y: cy - radius * Math.sin(a) });
         }
         heading -= delta;
         x = cx + radius * Math.cos(a1);
@@ -129,64 +120,43 @@
     };
   }
 
-  // ===================================================================
-  // CIRCUITO DEL JARAMA (Madrid) — reconstrucción estilizada
-  // ===================================================================
-  // Sentido horario. Curvas, en orden: Nuvolari + Fangio (pequeño quiebro
-  // justo tras la meta), Varzi, Le Mans, Farina, Pegaso (+ rampa bajo el
-  // puente), Ascari, Portago (frenada fuerte), las eses de Bugatti (aquí
-  // como un lazo/gancho cerrado, tal como se aprecia en el plano de
-  // referencia), Monza y, por último, María de Villota, que cierra el
-  // circuito reconectando con la recta de meta. Los radios/longitudes
-  // son una aproximación estilizada inspirada en la secuencia real y en
-  // la silueta de la imagen de referencia (no un plano topográfico
-  // milimétrico), ajustada para que el trazado cierre matemáticamente de
-  // forma exacta sobre el punto de partida (comprobado numéricamente:
-  // error de cierre del orden de 10⁻⁹).
-  //
-  // A lo largo de la construcción se capturan 3 checkpoints invisibles,
-  // repartidos de forma aproximadamente equidistante por el trazado, que
-  // el coche debe cruzar EN ORDEN (1 -> 2 -> 3) antes de que cruzar la
-  // meta cuente como una vuelta válida.
   const trackBuilder = createTrackBuilder(START_X, START_Y, START_ANGLE);
-  trackBuilder.forward(6881.210836435495);          // gran recta de meta
-  trackBuilder.turnLeft(500, 20);                    // Nuvolari + Fangio (quiebro tras meta)
+  trackBuilder.forward(6881.210836435495);
+  trackBuilder.turnLeft(500, 20);
   trackBuilder.forward(700);
-  trackBuilder.turnRight(400, 70);                   // Varzi
+  trackBuilder.turnRight(400, 70);
   trackBuilder.forward(500);
-  trackBuilder.turnLeft(250, 55);                    // Le Mans
+  trackBuilder.turnLeft(250, 55);
   trackBuilder.forward(400);
-  trackBuilder.turnRight(350, 60);                   // Farina
-  // --- Checkpoint 1 (~1/4 del trazado): justo después de Farina ---
+  trackBuilder.turnRight(350, 60);
+
   const checkpoint1State = trackBuilder.state();
   trackBuilder.forward(400);
-  trackBuilder.turnLeft(400, 65);                    // Pegaso
-  trackBuilder.forward(1500);                        // rampa Pegaso
-  trackBuilder.turnRight(500, 85);                   // Ascari
+  trackBuilder.turnLeft(400, 65);
+  trackBuilder.forward(1500);
+  trackBuilder.turnRight(500, 85);
   trackBuilder.forward(1200);
-  trackBuilder.turnRight(250, 120);                  // Portago (frenada fuerte)
+  trackBuilder.turnRight(250, 120);
   trackBuilder.forward(11075.655938779739 / 2);
-  // --- Checkpoint 2 (~mitad del trazado) ---
+
   const checkpoint2State = trackBuilder.state();
   trackBuilder.forward(11075.655938779739 / 2);
-  trackBuilder.turnLeft(300, 80);                    // Bugatti 1 (lazo cerrado)
+  trackBuilder.turnLeft(300, 80);
   trackBuilder.forward(250);
-  trackBuilder.turnRight(250, 30);                   // Bugatti 2
+  trackBuilder.turnRight(250, 30);
   trackBuilder.forward(250);
-  trackBuilder.turnLeft(300, 60);                    // Bugatti 3 (cierra el lazo)
+  trackBuilder.turnLeft(300, 60);
   trackBuilder.forward(700);
-  trackBuilder.turnRight(400, 75);                   // Monza 1
-  // --- Checkpoint 3 (~3/4 del trazado): justo después de Monza 1 ---
+  trackBuilder.turnRight(400, 75);
+
   const checkpoint3State = trackBuilder.state();
   trackBuilder.forward(400);
-  trackBuilder.turnRight(400, 110);                  // Monza 2
+  trackBuilder.turnRight(400, 110);
   trackBuilder.forward(800);
-  trackBuilder.turnRight(600, 90);                   // María de Villota (cierra el circuito)
+  trackBuilder.turnRight(600, 90);
   const trackPath = trackBuilder.getPath();
   const trackPoints = trackBuilder.getPoints();
 
-  // Caja delimitadora del trazado completo (en coordenadas de mundo), usada
-  // para escalar el dibujo del minimapa.
   const trackBounds = trackPoints.reduce((acc, p) => ({
     minX: Math.min(acc.minX, p.x),
     maxX: Math.max(acc.maxX, p.x),
@@ -194,18 +164,12 @@
     maxY: Math.max(acc.maxY, p.y)
   }), { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
 
-  // Línea de meta: un poco por delante del punto de partida, sobre la
-  // primera recta. FINISH_FORWARD es la dirección de circulación en ese
-  // punto y FINISH_PERP su perpendicular (para medir distancia lateral).
   const FINISH_DISTANCE_FROM_START = 250;
   const FINISH_X = START_X + Math.sin(START_ANGLE) * FINISH_DISTANCE_FROM_START;
   const FINISH_Y = START_Y - Math.cos(START_ANGLE) * FINISH_DISTANCE_FROM_START;
   const FINISH_FORWARD = { x: Math.sin(START_ANGLE), y: -Math.cos(START_ANGLE) };
   const FINISH_PERP = { x: Math.cos(START_ANGLE), y: Math.sin(START_ANGLE) };
 
-  // -------------------------------------------------------------------
-  // SISTEMA DE CHECKPOINTS (3 obligatorios, en orden, antes de la meta)
-  // -------------------------------------------------------------------
   function makeCheckpoint(state) {
     return {
       x: state.x,
@@ -222,129 +186,42 @@
   ];
   let checkpointsPassed = [false, false, false];
 
-  // -------------------------------------------------------------------
-  // PAREDES INVISIBLES DE COLISIÓN SÓLIDA
-  // -------------------------------------------------------------------
-  // Bloquean físicamente cualquier abertura o desvío a la DERECHA de la
-  // recta de meta, y el hueco justo detrás de la parrilla de salida, para
-  // que sea imposible girar a la derecha o dar la vuelta y circular en
-  // sentido contrario nada más salir. El coche rebota físicamente al
-  // tocarlas (nunca se queda "pegado" ni frenado en seco).
-  const GRID_BEHIND_DISTANCE = 400;   // pared trasera: distancia detrás de la parrilla
-  const STRAIGHT_WALL_END = 6881.210836435495 - 300; // la pared lateral acaba justo antes de la 1ª curva
-  const WALL_LATERAL_OFFSET = TRACK_WIDTH / 2 + 20;  // justo por fuera del piano, a la derecha
-
-  function pointAlongStraight(t) {
-    return {
-      x: START_X + FINISH_FORWARD.x * t,
-      y: START_Y + FINISH_FORWARD.y * t
-    };
-  }
-  const gridBack = pointAlongStraight(-GRID_BEHIND_DISTANCE);
-  const straightEnd = pointAlongStraight(STRAIGHT_WALL_END);
-
-  const WALLS = [
-    // Pared lateral derecha: recorre toda la recta de meta impidiendo
-    // desviarse a la derecha del trazado oficial.
-    {
-      x1: gridBack.x + WALL_LATERAL_OFFSET * FINISH_PERP.x,
-      y1: gridBack.y + WALL_LATERAL_OFFSET * FINISH_PERP.y,
-      x2: straightEnd.x + WALL_LATERAL_OFFSET * FINISH_PERP.x,
-      y2: straightEnd.y + WALL_LATERAL_OFFSET * FINISH_PERP.y
-    },
-    // Pared trasera: cierra el hueco justo detrás de la parrilla, para que
-    // no se pueda dar la vuelta y salir marcha atrás del circuito.
-    {
-      x1: gridBack.x - WALL_LATERAL_OFFSET * FINISH_PERP.x,
-      y1: gridBack.y - WALL_LATERAL_OFFSET * FINISH_PERP.y,
-      x2: gridBack.x + WALL_LATERAL_OFFSET * FINISH_PERP.x,
-      y2: gridBack.y + WALL_LATERAL_OFFSET * FINISH_PERP.y
-    }
-  ];
-
-  // --- Cámara (sigue al coche suavemente, tipo F1 on-board) ---
-  const camera = { x: START_X, y: START_Y };
-  const CAMERA_SMOOTH = 0.08; // 0 = cámara fija, 1 = cámara pegada al coche sin suavizado
-
-  // --- Cronómetro y vueltas ---
-  let raceStartTime = performance.now();
-  let lapStartTime = performance.now();
-  let currentLap = 1;
-  let lastLapTime = null;   // en segundos, null hasta completar la 1ª vuelta
-  let previousFinishSignedPos = 0;     // posición firmada respecto a la meta
-
-  // --- Estado de controles (combinación de teclado + táctil) ---
-  const keyboardState = { up: false, left: false, right: false };
-
-  // Array global de toques activos: cada elemento es { identifier, x, y }.
-  // Se actualiza directamente en los eventos touchstart/touchmove/touchend/touchcancel.
-  let activeTouches = [];
-
-  // Ajustar el canvas al tamaño completo de la ventana (no afecta al coche,
-  // que vive en coordenadas de mundo independientes de la pantalla)
-  function resizeCanvas() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-  }
-
-  // Posición firmada de un punto respecto a una referencia (con su propia
-  // dirección "forward"), medida a lo largo de esa dirección de
-  // circulación. Negativa = por detrás de la referencia, positiva = por
-  // delante. Se usa tanto para la meta como para los checkpoints.
-  function signedPositionAlong(px, py, refX, refY, forward) {
-    return (px - refX) * forward.x + (py - refY) * forward.y;
-  }
-
-  // Punto más cercano a (px,py) sobre el segmento [a,b]. Se usa tanto para
-  // la detección de arena/hierba (distancia al eje de la pista) como para
-  // la colisión con las paredes invisibles.
-  function closestPointOnSegment(px, py, ax, ay, bx, by) {
-    const abx = bx - ax;
-    const aby = by - ay;
-    const abLenSq = abx * abx + aby * aby;
-    let t = abLenSq > 0 ? ((px - ax) * abx + (py - ay) * aby) / abLenSq : 0;
-    t = Math.max(0, Math.min(1, t));
-    return { x: ax + abx * t, y: ay + aby * t };
-  }
-
-  // Distancia del coche al eje central del trazado (usando la polilínea
-  // muestreada trackPoints). Si supera TRACK_WIDTH/2, el coche está fuera
-  // del asfalto (arena/hierba).
-  function distanceToTrackCenterline(px, py) {
-    let minDist = Infinity;
-    for (let i = 0; i < trackPoints.length - 1; i++) {
-      const a = trackPoints[i];
-      const b = trackPoints[i + 1];
-      const cp = closestPointOnSegment(px, py, a.x, a.y, b.x, b.y);
-      const d = Math.hypot(px - cp.x, py - cp.y);
-      if (d < minDist) minDist = d;
-    }
-    return minDist;
-  }
-
-  // Resuelve colisiones contra las paredes invisibles: si el coche invade
-  // una pared, lo empuja fuera de ella y refleja físicamente la componente
-  // de velocidad normal al muro (rebote real, no un simple "stop").
   const WALL_COLLISION_RADIUS = carWidth / 2 + 6;
-  const WALL_BOUNCE = 0.5; // factor de restitución del rebote
-  const WALLS_UNLOCK_CHECKPOINTS = 2; // nº de checkpoints (de 3) a partir del cual se abre la barrera
+  const WALL_BOUNCE = 0.5;
 
-  // La barrera solo está activa (sólida) al PRINCIPIO de la vuelta, mientras
-  // el coche todavía no ha acumulado los checkpoints necesarios. En cuanto
-  // se alcanza el penúltimo checkpoint (2/3), se considera que el coche ya
-  // ha completado el trazado oficial y va camino de la meta, así que el
-  // tramo se abre automáticamente para dejarle pasar y cruzar la línea.
-  // Al cruzar la meta los checkpoints se resetean a 0/3 (ver
-  // checkLapCrossing), lo que vuelve a cerrar la barrera para la vuelta
-  // siguiente sin necesidad de ningún código adicional aquí.
-  function areWallsActive() {
+  // BARRERAS INVISIBLES A AMBOS LADOS EN LA ZONA QUE SEÑALAS CON EL RATÓN
+  function getDynamicWalls() {
     const passedCount = checkpointsPassed.filter(Boolean).length;
-    return passedCount < WALLS_UNLOCK_CHECKPOINTS;
+    let activeWalls = [];
+
+    // Se activan al tener los checkpoints pasados (2 o 3 pasados en la vuelta)
+    if (passedCount >= 2) {
+      const cp2 = CHECKPOINTS[1];
+      const cp3 = CHECKPOINTS[2];
+
+      // Pared 1: Lado superior de la mediana/isla interior
+      activeWalls.push({
+        x1: cp2.x - cp2.perp.x * (TRACK_WIDTH / 2 + 10),
+        y1: cp2.y - cp2.perp.y * (TRACK_WIDTH / 2 + 10),
+        x2: cp3.x - cp3.perp.x * (TRACK_WIDTH / 2 + 10),
+        y2: cp3.y - cp3.perp.y * (TRACK_WIDTH / 2 + 10)
+      });
+
+      // Pared 2: Lado inferior / bloqueo central para no cruzar a la meta atajando
+      activeWalls.push({
+        x1: cp3.x,
+        y1: cp3.y,
+        x2: FINISH_X - FINISH_PERP.x * (TRACK_WIDTH / 2 + 20),
+        y2: FINISH_Y - FINISH_PERP.y * (TRACK_WIDTH / 2 + 20)
+      });
+    }
+
+    return activeWalls;
   }
 
   function resolveWallCollisions() {
-    if (!areWallsActive()) return; // barrera abierta: no hay colisión que resolver
-    for (const wall of WALLS) {
+    const activeWalls = getDynamicWalls();
+    for (const wall of activeWalls) {
       const cp = closestPointOnSegment(car.x, car.y, wall.x1, wall.y1, wall.x2, wall.y2);
       let dx = car.x - cp.x;
       let dy = car.y - cp.y;
@@ -360,7 +237,7 @@
         const vx = Math.sin(car.angle) * car.velocity;
         const vy = -Math.cos(car.angle) * car.velocity;
         const vDotN = vx * nx + vy * ny;
-        if (vDotN < 0) { // solo rebota si se mueve HACIA la pared
+        if (vDotN < 0) {
           const rvx = vx - (1 + WALL_BOUNCE) * vDotN * nx;
           const rvy = vy - (1 + WALL_BOUNCE) * vDotN * ny;
           const newSpeed = Math.hypot(rvx, rvy);
@@ -373,7 +250,48 @@
     }
   }
 
-  // Coloca el coche en la parrilla de salida
+  const camera = { x: START_X, y: START_Y };
+  const CAMERA_SMOOTH = 0.08;
+
+  let raceStartTime = performance.now();
+  let lapStartTime = performance.now();
+  let currentLap = 1;
+  let lastLapTime = null;
+  let previousFinishSignedPos = 0;
+
+  const keyboardState = { up: false, left: false, right: false };
+  let activeTouches = [];
+
+  function resizeCanvas() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+
+  function signedPositionAlong(px, py, refX, refY, forward) {
+    return (px - refX) * forward.x + (py - refY) * forward.y;
+  }
+
+  function closestPointOnSegment(px, py, ax, ay, bx, by) {
+    const abx = bx - ax;
+    const aby = by - ay;
+    const abLenSq = abx * abx + aby * aby;
+    let t = abLenSq > 0 ? ((px - ax) * abx + (py - ay) * aby) / abLenSq : 0;
+    t = Math.max(0, Math.min(1, t));
+    return { x: ax + abx * t, y: ay + aby * t };
+  }
+
+  function distanceToTrackCenterline(px, py) {
+    let minDist = Infinity;
+    for (let i = 0; i < trackPoints.length - 1; i++) {
+      const a = trackPoints[i];
+      const b = trackPoints[i + 1];
+      const cp = closestPointOnSegment(px, py, a.x, a.y, b.x, b.y);
+      const d = Math.hypot(px - cp.x, py - cp.y);
+      if (d < minDist) minDist = d;
+    }
+    return minDist;
+  }
+
   function initCar() {
     car.x = START_X;
     car.y = START_Y;
@@ -388,17 +306,11 @@
     checkpointsPassed = [false, false, false];
   }
 
-  // Zonas de control (se dibujan como guía visual provisional):
-  //   - Acelerar ("Gas"): X > 70% del ancho, Y < 40% del alto (esquina superior derecha)
-  //   - Girar Izquierda: X < 50% del ancho
-  //   - Girar Derecha: X > 50% del ancho y Y > 40% del alto
   const ACCEL_ZONE_X_RATIO = 0.7;
   const ACCEL_ZONE_Y_RATIO = 0.4;
   const TURN_ZONE_X_RATIO = 0.5;
   const RIGHT_ZONE_Y_RATIO = 0.4;
 
-  // Evalúa, a partir del array global de toques activos, qué controles
-  // táctiles están pulsados EN ESTE FRAME. Se llama desde update().
   function evaluateTouchControls() {
     const w = window.innerWidth;
     const h = window.innerHeight;
@@ -420,11 +332,6 @@
     return { accelerate, left, right };
   }
 
-  // Comprueba si el coche acaba de cruzar cada checkpoint avanzando en el
-  // sentido correcto. Solo se marca como superado el checkpoint N si ya se
-  // superó el checkpoint N-1 (obliga al orden 1 -> 2 -> 3). Si el coche
-  // recula sobre un checkpoint ya superado, se anula (hay que volver a
-  // pasarlo hacia delante, y también los siguientes en su momento).
   function checkCheckpointsCrossing() {
     CHECKPOINTS.forEach((cp, i) => {
       const signedPos = signedPositionAlong(car.x, car.y, cp.x, cp.y, cp.forward);
@@ -434,10 +341,10 @@
       if (withinTrack) {
         if (cp.prevSignedPos < 0 && signedPos >= 0) {
           if (i === 0 || checkpointsPassed[i - 1]) {
-            checkpointsPassed[i] = true; // cruzado hacia delante y en orden
+            checkpointsPassed[i] = true;
           }
         } else if (cp.prevSignedPos >= 0 && signedPos < 0 && checkpointsPassed[i]) {
-          checkpointsPassed[i] = false; // ha reculado sobre el checkpoint
+          checkpointsPassed[i] = false;
         }
       }
 
@@ -445,17 +352,11 @@
     });
   }
 
-  // Comprueba si el coche acaba de cruzar la línea de meta en el sentido
-  // de circulación correcto (proyección sobre FINISH_FORWARD pasa de
-  // negativa a positiva) estando dentro del ancho de la pista. Solo cuenta
-  // como vuelta si además ya se han pasado los 3 checkpoints EN ORDEN
-  // (evita que cuente al arrancar, al girar a la derecha, o si el coche
-  // recula/da la vuelta sobre la meta).
   function checkLapCrossing() {
     checkCheckpointsCrossing();
 
     const signedPos = signedPositionAlong(car.x, car.y, FINISH_X, FINISH_Y, FINISH_FORWARD);
-    const lateralOffset = signedPositionAlong(car.x, car.y, FINISH_X, FINISH_Y, FINISH_PERP);
+    const lateralOffset = signedPositionAlong(car.x, car.y, FINISH_X, FINISH_PERP);
 
     const crossedForward = previousFinishSignedPos < 0 && signedPos >= 0;
     const withinTrack = Math.abs(lateralOffset) < TRACK_WIDTH / 2;
@@ -468,15 +369,12 @@
       if (currentLap < TOTAL_LAPS) {
         currentLap++;
       }
-      checkpointsPassed = [false, false, false]; // hay que volver a pasar los 3 para la próxima vuelta
+      checkpointsPassed = [false, false, false];
     }
 
     previousFinishSignedPos = signedPos;
   }
 
-  // Actualiza la física del coche (aceleración / fricción / rotación),
-  // aplicando pérdida de agarre si está fuera de pista (arena/hierba) y
-  // resolviendo el rebote contra las paredes invisibles.
   function update() {
     const touch = evaluateTouchControls();
 
@@ -484,9 +382,9 @@
     const turningLeft = keyboardState.left || touch.left;
     const turningRight = keyboardState.right || touch.right;
 
-    // --- Detección de superficie: asfalto o arena/hierba ---
+    // Detección fuera de pista
     const distFromCenter = distanceToTrackCenterline(car.x, car.y);
-    isCarOffTrack = distFromCenter > TRACK_WIDTH / 2;
+    isCarOffTrack = distFromCenter > (TRACK_WIDTH / 2 + OFFTRACK_TOLERANCE);
 
     const currentMaxSpeed = isCarOffTrack ? OFFTRACK_MAX_SPEED : MAX_SPEED;
     const currentTurnSpeed = isCarOffTrack ? OFFTRACK_TURN_SPEED : TURN_SPEED;
@@ -500,36 +398,26 @@
       if (Math.abs(car.velocity) < MIN_VELOCITY) car.velocity = 0;
     }
 
-    // Si el coche entra en la arena/hierba yendo más rápido que el nuevo
-    // límite de velocidad, no se frena en seco: pierde velocidad de forma
-    // progresiva (sensación de derrape), pero SIEMPRE puede seguir avanzando.
     if (car.velocity > currentMaxSpeed) {
       car.velocity += (currentMaxSpeed - car.velocity) * 0.06;
     }
 
-    // Solo tiene sentido girar si el coche se está moviendo
     if (car.velocity !== 0) {
       if (turningLeft) car.angle -= currentTurnSpeed;
       if (turningRight) car.angle += currentTurnSpeed;
     }
 
-    // El coche avanza en la dirección hacia la que apunta (angle 0 = "arriba" del mundo)
     car.x += Math.sin(car.angle) * car.velocity;
     car.y -= Math.cos(car.angle) * car.velocity;
 
-    // Paredes invisibles: rebote físico si intenta desviarse a la derecha
-    // de la recta de meta o dar la vuelta detrás de la parrilla.
     resolveWallCollisions();
 
-    // Cámara: sigue al coche con suavizado (interpolación lineal)
     camera.x += (car.x - camera.x) * CAMERA_SMOOTH;
     camera.y += (car.y - camera.y) * CAMERA_SMOOTH;
 
     checkLapCrossing();
   }
 
-  // Dibuja las 3 zonas táctiles como recuadros semitransparentes con texto guía
-  // (se dibuja en espacio de PANTALLA, no de mundo, así que no se ve afectado por la cámara)
   function drawTouchZones() {
     const w = canvas.width;
     const h = canvas.height;
@@ -539,7 +427,6 @@
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
-    // Zona "Gas": X > 70%, Y < 40% (esquina superior derecha)
     const accelX = w * ACCEL_ZONE_X_RATIO;
     const accelW = w - accelX;
     const accelH = h * ACCEL_ZONE_Y_RATIO;
@@ -550,7 +437,6 @@
     ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
     ctx.fillText('Gas', accelX + accelW / 2, accelH / 2);
 
-    // Zona "Girar Izq": X < 50%, alto completo
     const leftW = w * TURN_ZONE_X_RATIO;
     ctx.fillStyle = 'rgba(247, 127, 0, 0.15)';
     ctx.fillRect(0, 0, leftW, h);
@@ -559,7 +445,6 @@
     ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
     ctx.fillText('Girar Izq', leftW / 2, h / 2);
 
-    // Zona "Girar Der": X > 50%, Y > 40%
     const rightX = w * TURN_ZONE_X_RATIO;
     const rightY = h * RIGHT_ZONE_Y_RATIO;
     const rightW = w - rightX;
@@ -574,11 +459,6 @@
     ctx.restore();
   }
 
-  // Dibuja el coche: deportivo visto desde arriba (ruedas, carrocería,
-  // parabrisas, alerón). Todo se dibuja en coordenadas locales centradas
-  // en (0,0), con el frente apuntando hacia -y; luego se traslada/rota
-  // según la posición y el ángulo reales del coche EN EL MUNDO (el
-  // llamador ya habrá aplicado el desplazamiento de cámara antes de esto).
   function drawCar() {
     const w = carWidth;
     const h = carHeight;
@@ -589,22 +469,19 @@
     ctx.translate(car.x, car.y);
     ctx.rotate(car.angle);
 
-    // --- Ruedas (negras, debajo de la carrocería) ---
     const wheelW = 7;
     const wheelH = 16;
     ctx.fillStyle = '#0d0d0d';
-    ctx.fillRect(-halfW - wheelW / 2 + 3, -halfH + 6, wheelW, wheelH);          // delantera izq.
-    ctx.fillRect(halfW - wheelW / 2 - 3, -halfH + 6, wheelW, wheelH);           // delantera der.
-    ctx.fillRect(-halfW - wheelW / 2 + 3, halfH - wheelH - 8, wheelW, wheelH);  // trasera izq.
-    ctx.fillRect(halfW - wheelW / 2 - 3, halfH - wheelH - 8, wheelW, wheelH);   // trasera der.
+    ctx.fillRect(-halfW - wheelW / 2 + 3, -halfH + 6, wheelW, wheelH);
+    ctx.fillRect(halfW - wheelW / 2 - 3, -halfH + 6, wheelW, wheelH);
+    ctx.fillRect(-halfW - wheelW / 2 + 3, halfH - wheelH - 8, wheelW, wheelH);
+    ctx.fillRect(halfW - wheelW / 2 - 3, halfH - wheelH - 8, wheelW, wheelH);
 
-    // --- Alerón trasero ---
     ctx.fillStyle = '#0a0a0a';
-    ctx.fillRect(-halfW + 6, halfH - 11, 4, 8);   // soporte izq.
-    ctx.fillRect(halfW - 10, halfH - 11, 4, 8);   // soporte der.
-    ctx.fillRect(-halfW + 1, halfH - 6, w - 2, 5); // ala del alerón
+    ctx.fillRect(-halfW + 6, halfH - 11, 4, 8);
+    ctx.fillRect(halfW - 10, halfH - 11, 4, 8);
+    ctx.fillRect(-halfW + 1, halfH - 6, w - 2, 5);
 
-    // --- Carrocería (rectángulo con esquinas redondeadas) ---
     const r = 9;
     ctx.beginPath();
     ctx.moveTo(-halfW + r, -halfH);
@@ -627,11 +504,9 @@
     ctx.lineWidth = 2;
     ctx.stroke();
 
-    // --- Franja central deportiva ---
     ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
     ctx.fillRect(-3, -halfH + 5, 6, h - 10);
 
-    // --- Parabrisas (trapecio cerca del frente, frente = -y) ---
     ctx.beginPath();
     ctx.moveTo(-halfW * 0.55, -halfH * 0.6);
     ctx.lineTo(halfW * 0.55, -halfH * 0.6);
@@ -644,7 +519,6 @@
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    // --- Faros delanteros ---
     ctx.fillStyle = '#fff3b0';
     ctx.beginPath();
     ctx.arc(-halfW * 0.6, -halfH + 4, 2.5, 0, Math.PI * 2);
@@ -656,10 +530,6 @@
     ctx.restore();
   }
 
-  // Dibuja el terreno exterior (arena/hierba) que rodea el asfalto, en
-  // coordenadas de MUNDO, cubriendo únicamente la zona visible según la
-  // cámara actual (con margen), para que se desplace de forma natural
-  // junto con el circuito.
   function drawGround(offsetX, offsetY) {
     const viewLeft = -offsetX - 200;
     const viewTop = -offsetY - 200;
@@ -669,8 +539,6 @@
     ctx.fillStyle = '#33532f';
     ctx.fillRect(viewLeft, viewTop, viewRight - viewLeft, viewBottom - viewTop);
 
-    // Rayas de césped cortado (tono muy sutil), ancladas al mundo para dar
-    // sensación de movimiento real al circular por la arena/hierba.
     const stripeWidth = 160;
     ctx.fillStyle = 'rgba(255, 255, 255, 0.035)';
     const startStripe = Math.floor(viewLeft / stripeWidth) * stripeWidth;
@@ -679,14 +547,10 @@
     }
   }
 
-  // Dibuja el circuito completo en coordenadas de MUNDO: asfalto ancho,
-  // pianos rojo/blanco en ambos bordes (siguiendo cada curva) y línea de meta.
   function drawTrack() {
-    const curbExtra = 14; // cuánto sobresale el piano a cada lado del asfalto
-    const dash = 90;      // longitud de cada segmento rojo/blanco del piano
+    const curbExtra = 14;
+    const dash = 90;
 
-    // 1) Capa de pianos: se traza MÁS ANCHA que el asfalto, con un patrón
-    //    de guiones blanco/rojo alternados a lo largo de todo el trazado.
     ctx.save();
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
@@ -700,7 +564,6 @@
     ctx.stroke(trackPath);
     ctx.restore();
 
-    // 2) Asfalto por encima, más estrecho: solo deja ver el piano en los bordes
     ctx.save();
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
@@ -709,19 +572,13 @@
     ctx.stroke(trackPath);
     ctx.restore();
 
-    // 3) Línea de meta a cuadros, sobre la primera recta
     drawFinishLine();
   }
 
-  // Dibuja la línea de meta (patrón de cuadros) en coordenadas de MUNDO,
-  // orientada perpendicular a la dirección de circulación en ese punto:
-  // ancha a lo largo de TODO el ancho de la pista (eje lateral) y fina en
-  // el sentido de circulación, para que se vea como una línea horizontal
-  // cruzando la recta principal de lado a lado.
   function drawFinishLine() {
-    const lineDepth = 26; // grosor de la línea en el sentido de circulación
-    const cols = 10;      // divisiones a lo ancho de la pista
-    const rows = 3;       // divisiones en el grosor de la línea
+    const lineDepth = 26;
+    const cols = 10;
+    const rows = 3;
     const cellW = TRACK_WIDTH / cols;
     const cellH = lineDepth / rows;
 
@@ -740,7 +597,6 @@
     ctx.restore();
   }
 
-  // Convierte segundos -> "MM:SS.d"
   function formatTime(totalSeconds) {
     if (totalSeconds === null || totalSeconds === undefined) return '--:--.-';
     const minutes = Math.floor(totalSeconds / 60);
@@ -749,16 +605,12 @@
     return String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0') + '.' + tenths;
   }
 
-  // HUD: velocidad, tiempo total, vuelta actual, tiempo de la última
-  // vuelta, progreso de checkpoints y superficie actual (asfalto/arena).
-  // Se dibuja en espacio de PANTALLA (esquina superior izquierda), sin
-  // que le afecte la cámara ni el desplazamiento del mundo.
   const HUD_MARGIN = 12;
   const HUD_PADDING_X = 16;
   const HUD_PADDING_Y = 12;
   const HUD_LINE_HEIGHT = 24;
-  const HUD_LINE_COUNT = 6; // velocidad, tiempo total, vuelta, última vuelta, checkpoints, superficie
-  const HUD_BOX_WIDTH = 230;
+  const HUD_LINE_COUNT = 6;
+  const HUD_BOX_WIDTH = 250;
   const HUD_BOX_HEIGHT = HUD_PADDING_Y * 2 + HUD_LINE_HEIGHT * HUD_LINE_COUNT;
 
   function drawHUD() {
@@ -766,227 +618,122 @@
     const speedKmh = Math.round(velocityToKmh(car.velocity));
     const checkpointsCount = checkpointsPassed.filter(Boolean).length;
 
-    const lines = [
-      'Velocidad: ' + speedKmh + ' km/h',
-      'Tiempo Total: ' + formatTime(totalTime),
-      'Vuelta: ' + currentLap + '/' + TOTAL_LAPS,
-      'Última vuelta: ' + formatTime(lastLapTime),
-      'Checkpoints: ' + checkpointsCount + '/3',
-      'Superficie: ' + (isCarOffTrack ? 'Arena/Hierba' : 'Asfalto')
-    ];
+    const kmhText = `${speedKmh} km/h`;
+    const totalTimeText = `Tiempo: ${formatTime(totalTime)}`;
+    const lapText = `Vuelta: ${currentLap} / ${TOTAL_LAPS}`;
+    const lastLapText = `Última: ${formatTime(lastLapTime)}`;
+    const checkpointsText = `Checkpoints: ${checkpointsCount}/3`;
+    const surfaceText = isCarOffTrack ? 'Superficie: Arena/Hierba' : 'Superficie: Asfalto';
 
     ctx.save();
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
     ctx.fillRect(HUD_MARGIN, HUD_MARGIN, HUD_BOX_WIDTH, HUD_BOX_HEIGHT);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
     ctx.strokeRect(HUD_MARGIN, HUD_MARGIN, HUD_BOX_WIDTH, HUD_BOX_HEIGHT);
 
+    ctx.fillStyle = '#fff';
     ctx.font = 'bold 16px sans-serif';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
 
-    lines.forEach((line, i) => {
-      // La línea de superficie cambia de color según si está en arena o asfalto
-      if (i === 5) {
-        ctx.fillStyle = isCarOffTrack ? '#e0c341' : '#8fd694';
-      } else {
-        ctx.fillStyle = '#f1f1f1';
-      }
-      ctx.fillText(line, HUD_MARGIN + HUD_PADDING_X, HUD_MARGIN + HUD_PADDING_Y + HUD_LINE_HEIGHT * i + HUD_LINE_HEIGHT / 2);
-    });
+    let y = HUD_MARGIN + HUD_PADDING_Y + 16;
+    ctx.fillText(kmhText, HUD_MARGIN + HUD_PADDING_X, y); y += HUD_LINE_HEIGHT;
+    ctx.fillText(totalTimeText, HUD_MARGIN + HUD_PADDING_X, y); y += HUD_LINE_HEIGHT;
+    ctx.fillText(lapText, HUD_MARGIN + HUD_PADDING_X, y); y += HUD_LINE_HEIGHT;
+    ctx.fillText(lastLapText, HUD_MARGIN + HUD_PADDING_X, y); y += HUD_LINE_HEIGHT;
+    ctx.fillText(checkpointsText, HUD_MARGIN + HUD_PADDING_X, y); y += HUD_LINE_HEIGHT;
+
+    // Texto en AMARILLO cuando está fuera de pista
+    ctx.fillStyle = isCarOffTrack ? '#ffea00' : '#4cc9f0';
+    ctx.fillText(surfaceText, HUD_MARGIN + HUD_PADDING_X, y);
 
     ctx.restore();
   }
 
-  // Minimapa (radar): recuadro semitransparente en la esquina superior
-  // IZQUIERDA, justo debajo del HUD (velocidad y tiempos), con el trazado
-  // completo a escala reducida y un punto rojo brillante marcando la
-  // posición del coche en tiempo real.
-  const MINIMAP_SIZE = 170;
-  const MINIMAP_PADDING = 14;
-  const MINIMAP_GAP_BELOW_HUD = 12;
-
   function drawMinimap() {
-    const boxX = HUD_MARGIN;
-    const boxY = HUD_MARGIN + HUD_BOX_HEIGHT + MINIMAP_GAP_BELOW_HUD;
+    const mapSize = 140;
+    const padding = 10;
+    const x = canvas.width - mapSize - HUD_MARGIN;
+    const y = HUD_MARGIN;
 
     ctx.save();
-
-    // Fondo semitransparente del recuadro
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-    ctx.fillRect(boxX, boxY, MINIMAP_SIZE, MINIMAP_SIZE);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-    ctx.strokeRect(boxX, boxY, MINIMAP_SIZE, MINIMAP_SIZE);
-
-    // Recorta el resto del dibujo al recuadro
-    ctx.beginPath();
-    ctx.rect(boxX, boxY, MINIMAP_SIZE, MINIMAP_SIZE);
-    ctx.clip();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(x, y, mapSize, mapSize);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.strokeRect(x, y, mapSize, mapSize);
 
     const trackW = trackBounds.maxX - trackBounds.minX;
     const trackH = trackBounds.maxY - trackBounds.minY;
-    const available = MINIMAP_SIZE - MINIMAP_PADDING * 2;
-    const scale = Math.min(available / trackW, available / trackH);
+    const scale = Math.min((mapSize - padding * 2) / trackW, (mapSize - padding * 2) / trackH);
 
-    const centerWorldX = (trackBounds.minX + trackBounds.maxX) / 2;
-    const centerWorldY = (trackBounds.minY + trackBounds.maxY) / 2;
+    ctx.translate(x + mapSize / 2, y + mapSize / 2);
+    ctx.scale(scale, scale);
+    ctx.translate(-(trackBounds.minX + trackW / 2), -(trackBounds.minY + trackH / 2));
 
-    function worldToMinimap(px, py) {
-      return {
-        x: boxX + MINIMAP_SIZE / 2 + (px - centerWorldX) * scale,
-        y: boxY + MINIMAP_SIZE / 2 + (py - centerWorldY) * scale
-      };
-    }
+    ctx.lineWidth = 1 / scale * 4;
+    ctx.strokeStyle = '#888';
+    ctx.stroke(trackPath);
 
-    // Trazado completo simplificado (misma forma exacta que el circuito real)
+    ctx.fillStyle = '#ff4d5e';
     ctx.beginPath();
-    trackPoints.forEach((p, i) => {
-      const m = worldToMinimap(p.x, p.y);
-      if (i === 0) ctx.moveTo(m.x, m.y);
-      else ctx.lineTo(m.x, m.y);
-    });
-    ctx.strokeStyle = '#e0e0e0';
-    ctx.lineWidth = 3;
-    ctx.lineJoin = 'round';
-    ctx.stroke();
-
-    // Marca de la línea de meta
-    const finishM = worldToMinimap(FINISH_X, FINISH_Y);
-    ctx.fillStyle = '#4cc9f0';
-    ctx.beginPath();
-    ctx.arc(finishM.x, finishM.y, 3, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Marcas de los 3 checkpoints (verde si superado, gris si pendiente)
-    CHECKPOINTS.forEach((cp, i) => {
-      const m = worldToMinimap(cp.x, cp.y);
-      ctx.fillStyle = checkpointsPassed[i] ? '#57cc99' : 'rgba(255,255,255,0.5)';
-      ctx.beginPath();
-      ctx.arc(m.x, m.y, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-    });
-
-    // Punto brillante del coche (posición en tiempo real)
-    const carM = worldToMinimap(car.x, car.y);
-    ctx.shadowColor = '#ff3b30';
-    ctx.shadowBlur = 10;
-    ctx.fillStyle = '#ff3b30';
-    ctx.beginPath();
-    ctx.arc(carM.x, carM.y, 5, 0, Math.PI * 2);
+    ctx.arc(car.x, car.y, 1 / scale * 6, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.restore();
   }
 
-  // Dibuja fondo, terreno, circuito (con cámara F1 que sigue al coche),
-  // zonas táctiles, minimapa y HUD.
-  function draw() {
-    // Fondo oscuro de respaldo (por si algún borde queda sin cubrir)
-    ctx.fillStyle = '#111';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  function gameLoop() {
+    update();
 
-    // --- Mundo (terreno + circuito + coche), desplazado según la cámara ---
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
     const offsetX = canvas.width / 2 - camera.x;
     const offsetY = canvas.height / 2 - camera.y;
 
     ctx.save();
     ctx.translate(offsetX, offsetY);
+
     drawGround(offsetX, offsetY);
     drawTrack();
     drawCar();
+
     ctx.restore();
 
-    // --- Pantalla (HUD, minimapa y zonas táctiles), sin transformar ---
-    drawTouchZones();
-    drawMinimap();
     drawHUD();
-  }
+    drawMinimap();
+    drawTouchZones();
 
-  // Bucle principal del juego
-  function gameLoop() {
-    update();
-    draw();
     requestAnimationFrame(gameLoop);
   }
 
-  // --- Controles de teclado ---
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
-      keyboardState.up = true;
-    } else if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
-      keyboardState.left = true;
-    } else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
-      keyboardState.right = true;
-    }
+    if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') keyboardState.up = true;
+    if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keyboardState.left = true;
+    if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keyboardState.right = true;
   });
 
   window.addEventListener('keyup', (e) => {
-    if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
-      keyboardState.up = false;
-    } else if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
-      keyboardState.left = false;
-    } else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
-      keyboardState.right = false;
-    }
+    if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') keyboardState.up = false;
+    if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keyboardState.left = false;
+    if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keyboardState.right = false;
   });
 
-  // --- Controles táctiles (multitouch) ---
-  // El array activeTouches se mantiene sincronizado con los dedos reales
-  // sobre la pantalla en cada uno de estos 4 eventos. La evaluación de
-  // zonas ocurre aparte, en evaluateTouchControls(), dentro de update().
-
-  function upsertTouch(touch) {
-    const existing = activeTouches.find(t => t.identifier === touch.identifier);
-    if (existing) {
-      existing.x = touch.clientX;
-      existing.y = touch.clientY;
-    } else {
-      activeTouches.push({
-        identifier: touch.identifier,
-        x: touch.clientX,
-        y: touch.clientY
-      });
+  function updateTouches(e) {
+    activeTouches = [];
+    for (let i = 0; i < e.touches.length; i++) {
+      const t = e.touches[i];
+      activeTouches.push({ identifier: t.identifier, x: t.clientX, y: t.clientY });
     }
   }
 
-  function removeTouch(touch) {
-    activeTouches = activeTouches.filter(t => t.identifier !== touch.identifier);
-  }
-
-  canvas.addEventListener('touchstart', (e) => {
-    e.preventDefault();
-    for (const touch of e.changedTouches) {
-      upsertTouch(touch);
-    }
-  }, { passive: false });
-
-  canvas.addEventListener('touchmove', (e) => {
-    e.preventDefault();
-    for (const touch of e.changedTouches) {
-      upsertTouch(touch);
-    }
-  }, { passive: false });
-
-  canvas.addEventListener('touchend', (e) => {
-    e.preventDefault();
-    for (const touch of e.changedTouches) {
-      removeTouch(touch);
-    }
-  }, { passive: false });
-
-  canvas.addEventListener('touchcancel', (e) => {
-    e.preventDefault();
-    for (const touch of e.changedTouches) {
-      removeTouch(touch);
-    }
-  }, { passive: false });
+  window.addEventListener('touchstart', (e) => { updateTouches(e); }, { passive: false });
+  window.addEventListener('touchmove', (e) => { updateTouches(e); }, { passive: false });
+  window.addEventListener('touchend', (e) => { updateTouches(e); }, { passive: false });
+  window.addEventListener('touchcancel', (e) => { updateTouches(e); }, { passive: false });
 
   window.addEventListener('resize', resizeCanvas);
 
-  // Inicializar
   resizeCanvas();
   initCar();
-  gameLoop();
+  requestAnimationFrame(gameLoop);
 </script>
 </body>
 </html>
