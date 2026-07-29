@@ -262,6 +262,17 @@
     }
   ];
 
+  const MEDIAN_WALLS = [
+    // Bloque físico invisible en la mediana (interior de la última curva)
+    // Se activa solo al tener 3/3 checkpoints para evitar el atajo final.
+    { x1: 0, y1: WALL_LATERAL_OFFSET, x2: 3000, y2: WALL_LATERAL_OFFSET },     // Recta de meta
+    { x1: -297, y1: 303, x2: 0, y2: WALL_LATERAL_OFFSET },                     // Curva María de Villota (mitad 2)
+    { x1: -420, y1: 600, x2: -297, y2: 303 },                                  // Curva María de Villota (mitad 1)
+    { x1: -420, y1: 1500, x2: -420, y2: 600 },                                 // Recta de retorno
+    { x1: 3000, y1: WALL_LATERAL_OFFSET, x2: 3000, y2: 1500 },                 // Cierre este
+    { x1: -420, y1: 1500, x2: 3000, y2: 1500 }                                 // Cierre sur
+  ];
+
   // --- Cámara (sigue al coche suavemente, tipo F1 on-board) ---
   const camera = { x: START_X, y: START_Y };
   const CAMERA_SMOOTH = 0.08; // 0 = cámara fija, 1 = cámara pegada al coche sin suavizado
@@ -337,14 +348,16 @@
   // Al cruzar la meta los checkpoints se resetean a 0/3 (ver
   // checkLapCrossing), lo que vuelve a cerrar la barrera para la vuelta
   // siguiente sin necesidad de ningún código adicional aquí.
-  function areWallsActive() {
-    const passedCount = checkpointsPassed.filter(Boolean).length;
-    return passedCount < WALLS_UNLOCK_CHECKPOINTS;
-  }
-
   function resolveWallCollisions() {
-    if (!areWallsActive()) return; // barrera abierta: no hay colisión que resolver
-    for (const wall of WALLS) {
+    const passedCount = checkpointsPassed.filter(Boolean).length;
+    const startWallsActive = passedCount < WALLS_UNLOCK_CHECKPOINTS;
+    const medianWallsActive = passedCount === 3;
+
+    if (!startWallsActive && !medianWallsActive) return;
+
+    const activeWalls = (startWallsActive ? WALLS : []).concat(medianWallsActive ? MEDIAN_WALLS : []);
+
+    for (const wall of activeWalls) {
       const cp = closestPointOnSegment(car.x, car.y, wall.x1, wall.y1, wall.x2, wall.y2);
       let dx = car.x - cp.x;
       let dy = car.y - cp.y;
