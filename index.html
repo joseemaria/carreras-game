@@ -169,11 +169,13 @@
   // --- Checkpoint 2 (~mitad del trazado) ---
   const checkpoint2State = trackBuilder.state();
   trackBuilder.forward(11075.655938779739 / 2);
+  const bugattiStartState = trackBuilder.state();
   trackBuilder.turnLeft(300, 80);                    // Bugatti 1 (lazo cerrado)
   trackBuilder.forward(250);
   trackBuilder.turnRight(250, 30);                   // Bugatti 2
   trackBuilder.forward(250);
   trackBuilder.turnLeft(300, 60);                    // Bugatti 3 (cierra el lazo)
+  const bugattiEndState = trackBuilder.state();
   trackBuilder.forward(700);
   trackBuilder.turnRight(400, 75);                   // Monza 1
   // --- Checkpoint 3 (~3/4 del trazado): justo después de Monza 1 ---
@@ -281,6 +283,24 @@
     { x1: 400, y1: -WALL_LATERAL_OFFSET, x2: 400, y2: WALL_LATERAL_OFFSET }    // Bloqueo hacia atrás (parrilla)
   ];
 
+  function createGrassWall(state) {
+    const lx = Math.sin(state.heading - Math.PI / 2);
+    const ly = -Math.cos(state.heading - Math.PI / 2);
+    return {
+      x1: state.x + WALL_LATERAL_OFFSET * lx,
+      y1: state.y + WALL_LATERAL_OFFSET * ly,
+      x2: state.x + 3000 * lx,
+      y2: state.y + 3000 * ly
+    };
+  }
+
+  const BUGATTI_WALLS = [
+    // Dos barreras invisibles que se extienden hacia la hierba en el interior de Bugatti
+    // para evitar que el jugador se salte la "media rotonda" atajando.
+    createGrassWall(bugattiStartState),
+    createGrassWall(bugattiEndState)
+  ];
+
   // --- Cámara (sigue al coche suavemente, tipo F1 on-board) ---
   const camera = { x: START_X, y: START_Y };
   const CAMERA_SMOOTH = 0.08; // 0 = cámara fija, 1 = cámara pegada al coche sin suavizado
@@ -366,7 +386,10 @@
 
     let activeWalls = [];
     if (startWallsActive) activeWalls = activeWalls.concat(WALLS);
-    if (loopWallsActive) activeWalls = activeWalls.concat(CHECKPOINT2_WALLS);
+    if (loopWallsActive) {
+      activeWalls = activeWalls.concat(CHECKPOINT2_WALLS);
+      activeWalls = activeWalls.concat(BUGATTI_WALLS);
+    }
     if (medianWallsActive) activeWalls = activeWalls.concat(MEDIAN_WALLS);
 
     for (const wall of activeWalls) {
