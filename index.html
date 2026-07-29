@@ -273,6 +273,14 @@
     { x1: -420, y1: 1500, x2: 3000, y2: 1500 }                                 // Cierre sur
   ];
 
+  const CHECKPOINT2_WALLS = [
+    // Bloqueo transversal de la recta principal cuando se tienen 2/3 checkpoints.
+    // Evita que el jugador gire a la derecha en la intersección y repita el primer sector,
+    // o que vaya hacia la parrilla de salida por el camino equivocado.
+    { x1: 6000, y1: -WALL_LATERAL_OFFSET, x2: 6000, y2: WALL_LATERAL_OFFSET }, // Bloqueo hacia adelante (curva 1)
+    { x1: 400, y1: -WALL_LATERAL_OFFSET, x2: 400, y2: WALL_LATERAL_OFFSET }    // Bloqueo hacia atrás (parrilla)
+  ];
+
   // --- Cámara (sigue al coche suavemente, tipo F1 on-board) ---
   const camera = { x: START_X, y: START_Y };
   const CAMERA_SMOOTH = 0.08; // 0 = cámara fija, 1 = cámara pegada al coche sin suavizado
@@ -351,11 +359,15 @@
   function resolveWallCollisions() {
     const passedCount = checkpointsPassed.filter(Boolean).length;
     const startWallsActive = passedCount < WALLS_UNLOCK_CHECKPOINTS;
+    const loopWallsActive = passedCount === 2;
     const medianWallsActive = passedCount === 3;
 
-    if (!startWallsActive && !medianWallsActive) return;
+    if (!startWallsActive && !medianWallsActive && !loopWallsActive) return;
 
-    const activeWalls = (startWallsActive ? WALLS : []).concat(medianWallsActive ? MEDIAN_WALLS : []);
+    let activeWalls = [];
+    if (startWallsActive) activeWalls = activeWalls.concat(WALLS);
+    if (loopWallsActive) activeWalls = activeWalls.concat(CHECKPOINT2_WALLS);
+    if (medianWallsActive) activeWalls = activeWalls.concat(MEDIAN_WALLS);
 
     for (const wall of activeWalls) {
       const cp = closestPointOnSegment(car.x, car.y, wall.x1, wall.y1, wall.x2, wall.y2);
