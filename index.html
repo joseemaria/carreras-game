@@ -20,15 +20,16 @@
   }
   #trackCanvas {
     position: absolute;
-    left: -50vw;
+    left: 0;
     top: 0;
-    width: 200vw;
+    width: 100vw;
     height: 100vh;
     transform-origin: 50% 80%;
-    transform: perspective(600px) rotateX(60deg);
+    transform: perspective(600px) rotateX(60deg) scale(3);
     z-index: 1;
     -webkit-mask-image: linear-gradient(to bottom, transparent 35%, black 50%);
     mask-image: linear-gradient(to bottom, transparent 35%, black 50%);
+    will-change: transform;
   }
   #uiCanvas {
     position: absolute;
@@ -343,17 +344,32 @@
   // Se actualiza directamente en los eventos touchstart/touchmove/touchend/touchcancel.
   let activeTouches = [];
 
+  const TRACK_CSS_SCALE = 3;
+
   // Ajustar el canvas al tamaño completo de la ventana (no afecta al coche,
   // que vive en coordenadas de mundo independientes de la pantalla)
   function resizeCanvas() {
-    // Multiplicar la resolución para lograr anti-aliasing puro en la pista pseudo-3D
-    const dpr = window.devicePixelRatio > 1 ? window.devicePixelRatio : 2;
-    trackCanvas.width = window.innerWidth * 2 * dpr;
-    trackCanvas.height = window.innerHeight * dpr;
-    trackCtx.scale(dpr, dpr);
+    const dpr = window.devicePixelRatio || 1;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
 
-    uiCanvas.width = window.innerWidth * dpr;
-    uiCanvas.height = window.innerHeight * dpr;
+    // Limitar la resolución interna de la pista para evitar el bug de tiling de Chrome 
+    // (línea vertical en el centro y pérdida de antialiasing por exceso de tamaño)
+    const maxTextureSize = 3500; 
+    let trackDpr = dpr * TRACK_CSS_SCALE;
+    
+    if (w * trackDpr > maxTextureSize) trackDpr = maxTextureSize / w;
+    if (h * trackDpr > maxTextureSize) trackDpr = maxTextureSize / h;
+
+    trackCanvas.width = w * trackDpr;
+    trackCanvas.height = h * trackDpr;
+
+    // Compensar el scale de CSS para que el tamaño en pantalla de los objetos sea el correcto
+    const drawScale = trackDpr / TRACK_CSS_SCALE;
+    trackCtx.scale(drawScale, drawScale);
+
+    uiCanvas.width = w * dpr;
+    uiCanvas.height = h * dpr;
     uiCtx.scale(dpr, dpr);
   }
 
@@ -1036,17 +1052,18 @@
   }
 
   function draw() {
-    // Limpiar usando coordenadas lógicas (afectado por dpr scale)
-    trackCtx.clearRect(0, 0, window.innerWidth * 2, window.innerHeight);
+    // Limpiar usando coordenadas lógicas
+    trackCtx.clearRect(0, 0, window.innerWidth * TRACK_CSS_SCALE, window.innerHeight * TRACK_CSS_SCALE);
     uiCtx.clearRect(0, 0, window.innerWidth, window.innerHeight);
 
     // --- Mundo 2.5D en trackCanvas ---
     trackCtx.save();
     
     // Anclaje de la perspectiva en trackCanvas: 
-    // width es 200vw, por tanto su mitad coincide con window.innerWidth
-    const pivotX = window.innerWidth;
-    const pivotY = window.innerHeight * 0.8;
+    // El tamaño lógico total es window.innerWidth * TRACK_CSS_SCALE.
+    // transform-origin en CSS es 50% 80%.
+    const pivotX = (window.innerWidth * TRACK_CSS_SCALE) / 2;
+    const pivotY = (window.innerHeight * TRACK_CSS_SCALE) * 0.8;
     
     trackCtx.translate(pivotX, pivotY);
     // Rotar para que el track siempre venga hacia nosotros (coche siempre apunta "arriba")
