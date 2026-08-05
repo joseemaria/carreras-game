@@ -27,6 +27,8 @@
     transform-origin: 50% 80%;
     transform: perspective(600px) rotateX(60deg);
     z-index: 1;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 35%, black 50%);
+    mask-image: linear-gradient(to bottom, transparent 35%, black 50%);
   }
   #uiCanvas {
     position: absolute;
@@ -344,10 +346,15 @@
   // Ajustar el canvas al tamaño completo de la ventana (no afecta al coche,
   // que vive en coordenadas de mundo independientes de la pantalla)
   function resizeCanvas() {
-    trackCanvas.width = window.innerWidth * 2;
-    trackCanvas.height = window.innerHeight;
-    uiCanvas.width = window.innerWidth;
-    uiCanvas.height = window.innerHeight;
+    // Multiplicar la resolución para lograr anti-aliasing puro en la pista pseudo-3D
+    const dpr = window.devicePixelRatio > 1 ? window.devicePixelRatio : 2;
+    trackCanvas.width = window.innerWidth * 2 * dpr;
+    trackCanvas.height = window.innerHeight * dpr;
+    trackCtx.scale(dpr, dpr);
+
+    uiCanvas.width = window.innerWidth * dpr;
+    uiCanvas.height = window.innerHeight * dpr;
+    uiCtx.scale(dpr, dpr);
   }
 
   // Posición firmada de un punto respecto a una referencia (con su propia
@@ -603,8 +610,8 @@
   // Dibuja las 3 zonas táctiles como recuadros semitransparentes con texto guía
   // (se dibuja en espacio de PANTALLA, no de mundo, así que no se ve afectado por la cámara)
   function drawTouchZones() {
-    const w = uiCanvas.width;
-    const h = uiCanvas.height;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
 
     uiCtx.save();
     uiCtx.font = 'bold 20px sans-serif';
@@ -646,11 +653,10 @@
     uiCtx.restore();
   }
 
-  // Dibuja el coche: deportivo visto desde arriba (ruedas, carrocería,
-  // parabrisas, alerón). Todo se dibuja en coordenadas locales centradas
-  // en (0,0), con el frente apuntando hacia -y; luego se traslada/rota
-  // según la posición y el ángulo reales del coche EN EL MUNDO (el
-  // llamador ya habrá aplicado el desplazamiento de cámara antes de esto).
+  let visualRoll = 0; // Inercia lateral del chasis
+
+  // Dibuja el coche: deportivo renderizado con profundidad pseudo-3D y
+  // balanceo de carrocería (body roll) según la inercia del giro.
   function drawCar() {
     const w = carWidth;
     const h = carHeight;
@@ -658,81 +664,145 @@
     const halfH = h / 2;
 
     uiCtx.save();
-    // Position car fixed at the bottom center of the UI canvas
-    const carScreenX = uiCanvas.width / 2;
-    const carScreenY = uiCanvas.height * 0.8;
+    // Posición fija en el uiCanvas (coordenadas lógicas de la ventana)
+    const carScreenX = window.innerWidth / 2;
+    const carScreenY = window.innerHeight * 0.8;
     uiCtx.translate(carScreenX, carScreenY);
     
-    // Slight visual steering based on input (purely aesthetic in 2.5D)
     const touch = evaluateTouchControls();
+    const isTurningLeft = keyboardState.left || touch.left;
+    const isTurningRight = keyboardState.right || touch.right;
+
+    // --- Inclinación y balanceo (Body Roll) ---
     let visualAngle = 0;
-    if (keyboardState.left || touch.left) visualAngle = -0.15;
-    if (keyboardState.right || touch.right) visualAngle = 0.15;
+    if (isTurningLeft) visualAngle = -0.12;
+    if (isTurningRight) visualAngle = 0.12;
+
+    const speedRatio = car.velocity / MAX_SPEED;
+    let targetRoll = 0;
+    // Si giramos a la izquierda, la fuerza centrífuga empuja el chasis a la derecha (roll positivo)
+    if (isTurningLeft) targetRoll = 0.18 * speedRatio;
+    if (isTurningRight) targetRoll = -0.18 * speedRatio;
+    
+    // Suavizado del balanceo
+    visualRoll += (targetRoll - visualRoll) * 0.15;
+
+    // --- Sombra (plana en el suelo, sin inclinación) ---
+    uiCtx.fillStyle = 'rgba(0,0,0,0.5)';
+    uiCtx.beginPath();
+    uiCtx.ellipse(0, halfH - 12, w * 0.55, h * 0.45, 0, 0, Math.PI * 2);
+    uiCtx.fill();
+
     uiCtx.rotate(visualAngle);
 
-    // --- Ruedas (negras, debajo de la carrocería) ---
-    const wheelW = 7;
-    const wheelH = 16;
-    uiCtx.fillStyle = '#0d0d0d';
-    uiCtx.fillRect(-halfW - wheelW / 2 + 3, -halfH + 6, wheelW, wheelH);          // delantera izq.
-    uiCtx.fillRect(halfW - wheelW / 2 - 3, -halfH + 6, wheelW, wheelH);           // delantera der.
-    uiCtx.fillRect(-halfW - wheelW / 2 + 3, halfH - wheelH - 8, wheelW, wheelH);  // trasera izq.
-    uiCtx.fillRect(halfW - wheelW / 2 - 3, halfH - wheelH - 8, wheelW, wheelH);   // trasera der.
-
-    // --- Alerón trasero ---
+    // --- Ruedas (eje fijo al suelo, pero reaccionan al peso de la suspensión) ---
+    const wheelW = 9;
+    const wheelH = 18;
     uiCtx.fillStyle = '#0a0a0a';
-    uiCtx.fillRect(-halfW + 6, halfH - 11, 4, 8);   // soporte izq.
-    uiCtx.fillRect(halfW - 10, halfH - 11, 4, 8);   // soporte der.
-    uiCtx.fillRect(-halfW + 1, halfH - 6, w - 2, 5); // ala del alerón
+    
+    // Desplazamiento X para simular compresión lateral
+    const wheelRollOffset = visualRoll * 6; 
+    
+    uiCtx.fillRect(-halfW - wheelW / 2 + 2 - wheelRollOffset, -halfH + 8, wheelW, wheelH); // delantera izq
+    uiCtx.fillRect(halfW - wheelW / 2 - 2 - wheelRollOffset, -halfH + 8, wheelW, wheelH);  // delantera der
+    uiCtx.fillRect(-halfW - wheelW / 2 + 2 - wheelRollOffset, halfH - wheelH - 10, wheelW, wheelH); // trasera izq
+    uiCtx.fillRect(halfW - wheelW / 2 - 2 - wheelRollOffset, halfH - wheelH - 10, wheelW, wheelH);  // trasera der
 
-    // --- Carrocería (rectángulo con esquinas redondeadas) ---
-    const r = 9;
+    // --- Chasis principal afectado por el balanceo ---
+    // Trasladar el eje de rotación a la parte inferior del coche para que se balancee desde abajo
+    uiCtx.translate(0, halfH - 15);
+    uiCtx.rotate(visualRoll);
+    uiCtx.translate(0, -(halfH - 15));
+
+    // Parachoques trasero (profundidad 3D)
+    uiCtx.fillStyle = '#9e0d18';
     uiCtx.beginPath();
-    uiCtx.moveTo(-halfW + r, -halfH);
-    uiCtx.lineTo(halfW - r, -halfH);
-    uiCtx.quadraticCurveTo(halfW, -halfH, halfW, -halfH + r);
-    uiCtx.lineTo(halfW, halfH - r);
-    uiCtx.quadraticCurveTo(halfW, halfH, halfW - r, halfH);
-    uiCtx.lineTo(-halfW + r, halfH);
-    uiCtx.quadraticCurveTo(-halfW, halfH, -halfW, halfH - r);
-    uiCtx.lineTo(-halfW, -halfH + r);
-    uiCtx.quadraticCurveTo(-halfW, -halfH, -halfW + r, -halfH);
+    uiCtx.roundRect(-halfW + 2, halfH - 24, w - 4, 18, 4);
+    uiCtx.fill();
+
+    // Tubos de escape y difusor inferior
+    uiCtx.fillStyle = '#111';
+    uiCtx.fillRect(-halfW + 6, halfH - 8, 8, 5); // escape izq
+    uiCtx.fillRect(halfW - 14, halfH - 8, 8, 5); // escape der
+    uiCtx.fillStyle = '#222';
+    uiCtx.fillRect(-halfW + 16, halfH - 6, w - 32, 3); // difusor
+
+    // Luces de freno
+    const braking = !keyboardState.up && !touch.accelerate && car.velocity > 1;
+    uiCtx.fillStyle = braking ? '#ff0516' : '#8a0000';
+    uiCtx.shadowColor = braking ? '#ff0516' : 'transparent';
+    uiCtx.shadowBlur = braking ? 15 : 0;
+    uiCtx.beginPath();
+    uiCtx.roundRect(-halfW + 4, halfH - 18, 10, 6, 2);
+    uiCtx.roundRect(halfW - 14, halfH - 18, 10, 6, 2);
+    uiCtx.fill();
+    uiCtx.shadowBlur = 0; // reset
+
+    // Matrícula trasera
+    uiCtx.fillStyle = '#e5e5e5';
+    uiCtx.fillRect(-6, halfH - 16, 12, 6);
+
+    // Techo y capó (bloque superior trapezoidal, la parte trasera es más ancha)
+    uiCtx.beginPath();
+    uiCtx.moveTo(-halfW + 3, halfH - 24);
+    uiCtx.lineTo(halfW - 3, halfH - 24);
+    uiCtx.lineTo(halfW - 6, -halfH + 15); // ancho techo
+    uiCtx.lineTo(halfW - 9, -halfH);      // morro
+    uiCtx.lineTo(-halfW + 9, -halfH);
+    uiCtx.lineTo(-halfW + 6, -halfH + 15);
     uiCtx.closePath();
 
     const bodyGradient = uiCtx.createLinearGradient(0, -halfH, 0, halfH);
     bodyGradient.addColorStop(0, '#ff4d5e');
-    bodyGradient.addColorStop(1, '#c1121f');
+    bodyGradient.addColorStop(1, '#d90416');
     uiCtx.fillStyle = bodyGradient;
     uiCtx.fill();
-    uiCtx.strokeStyle = '#7a0a12';
-    uiCtx.lineWidth = 2;
+    uiCtx.strokeStyle = '#6b0710';
+    uiCtx.lineWidth = 1.5;
     uiCtx.stroke();
 
-    // --- Franja central deportiva ---
-    uiCtx.fillStyle = 'rgba(255, 255, 255, 0.55)';
-    uiCtx.fillRect(-3, -halfH + 5, 6, h - 10);
-
-    // --- Parabrisas (trapecio cerca del frente, frente = -y) ---
+    // Franja central deportiva (sigue la perspectiva trapezoidal)
+    uiCtx.fillStyle = 'rgba(255, 255, 255, 0.75)';
     uiCtx.beginPath();
-    uiCtx.moveTo(-halfW * 0.55, -halfH * 0.6);
-    uiCtx.lineTo(halfW * 0.55, -halfH * 0.6);
-    uiCtx.lineTo(halfW * 0.35, -halfH * 0.1);
-    uiCtx.lineTo(-halfW * 0.35, -halfH * 0.1);
-    uiCtx.closePath();
-    uiCtx.fillStyle = 'rgba(140, 205, 230, 0.85)';
+    uiCtx.moveTo(-3, halfH - 24);
+    uiCtx.lineTo(3, halfH - 24);
+    uiCtx.lineTo(2, -halfH);
+    uiCtx.lineTo(-2, -halfH);
     uiCtx.fill();
-    uiCtx.strokeStyle = '#2b2b2b';
+
+    // Luna trasera (cristal oscurecido en escorzo)
+    uiCtx.fillStyle = '#141414';
+    uiCtx.beginPath();
+    uiCtx.moveTo(-halfW + 6, halfH - 28);
+    uiCtx.lineTo(halfW - 6, halfH - 28);
+    uiCtx.lineTo(halfW - 9, halfH - 44);
+    uiCtx.lineTo(-halfW + 9, halfH - 44);
+    uiCtx.fill();
+    
+    // Reflejo diagonal de la luna trasera
+    uiCtx.fillStyle = 'rgba(255,255,255,0.12)';
+    uiCtx.beginPath();
+    uiCtx.moveTo(-halfW + 7, halfH - 29);
+    uiCtx.lineTo(0, halfH - 29);
+    uiCtx.lineTo(-3, halfH - 43);
+    uiCtx.lineTo(-halfW + 10, halfH - 43);
+    uiCtx.fill();
+
+    // Alerón trasero prominente 3D
+    uiCtx.fillStyle = '#0a0a0a'; // Soportes
+    uiCtx.fillRect(-halfW + 8, halfH - 22, 3, 10);
+    uiCtx.fillRect(halfW - 11, halfH - 22, 3, 10);
+    
+    uiCtx.fillStyle = '#ff4d5e'; // Ala principal (curvada)
+    uiCtx.beginPath();
+    uiCtx.moveTo(-halfW - 2, halfH - 14);
+    uiCtx.quadraticCurveTo(0, halfH - 18, halfW + 2, halfH - 14);
+    uiCtx.lineTo(halfW + 2, halfH - 10);
+    uiCtx.quadraticCurveTo(0, halfH - 14, -halfW - 2, halfH - 10);
+    uiCtx.fill();
+    uiCtx.strokeStyle = '#111';
     uiCtx.lineWidth = 1;
     uiCtx.stroke();
-
-    // --- Faros delanteros ---
-    uiCtx.fillStyle = '#fff3b0';
-    uiCtx.beginPath();
-    uiCtx.arc(-halfW * 0.6, -halfH + 4, 2.5, 0, Math.PI * 2);
-    uiCtx.fill();
-    uiCtx.beginPath();
-    uiCtx.arc(halfW * 0.6, -halfH + 4, 2.5, 0, Math.PI * 2);
-    uiCtx.fill();
 
     uiCtx.restore();
   }
@@ -889,9 +959,10 @@
     uiCtx.save();
 
     // Fondo semitransparente del recuadro
-    uiCtx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+    uiCtx.fillStyle = 'rgba(0, 0, 0, 0.65)';
     uiCtx.fillRect(boxX, boxY, MINIMAP_SIZE, MINIMAP_SIZE);
-    uiCtx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+    uiCtx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+    uiCtx.lineWidth = 1;
     uiCtx.strokeRect(boxX, boxY, MINIMAP_SIZE, MINIMAP_SIZE);
 
     // Recorta el resto del dibujo al recuadro
@@ -899,73 +970,83 @@
     uiCtx.rect(boxX, boxY, MINIMAP_SIZE, MINIMAP_SIZE);
     uiCtx.clip();
 
+    const cx = boxX + MINIMAP_SIZE / 2;
+    const cy = boxY + MINIMAP_SIZE / 2;
+
     const trackW = trackBounds.maxX - trackBounds.minX;
     const trackH = trackBounds.maxY - trackBounds.minY;
     const available = MINIMAP_SIZE - MINIMAP_PADDING * 2;
-    const scale = Math.min(available / trackW, available / trackH);
+    // Ampliamos un poco el mapa ya que ahora gira alrededor del coche como un GPS
+    const scale = Math.min(available / trackW, available / trackH) * 1.3;
 
-    const centerWorldX = (trackBounds.minX + trackBounds.maxX) / 2;
-    const centerWorldY = (trackBounds.minY + trackBounds.maxY) / 2;
-
-    function worldToMinimap(px, py) {
-      return {
-        x: boxX + MINIMAP_SIZE / 2 + (px - centerWorldX) * scale,
-        y: boxY + MINIMAP_SIZE / 2 + (py - centerWorldY) * scale
-      };
-    }
+    // --- Transformación dinámica: el mapa gira alrededor del coche ---
+    uiCtx.translate(cx, cy);
+    uiCtx.rotate(-car.angle); // El coche siempre apuntará hacia "arriba" en el minimapa
+    uiCtx.scale(scale, scale);
+    uiCtx.translate(-car.x, -car.y);
 
     // Trazado completo simplificado
     uiCtx.beginPath();
     trackPoints.forEach((p, i) => {
-      const m = worldToMinimap(p.x, p.y);
-      if (i === 0) uiCtx.moveTo(m.x, m.y);
-      else uiCtx.lineTo(m.x, m.y);
+      if (i === 0) uiCtx.moveTo(p.x, p.y);
+      else uiCtx.lineTo(p.x, p.y);
     });
     uiCtx.strokeStyle = '#e0e0e0';
-    uiCtx.lineWidth = 3;
+    uiCtx.lineWidth = 3 / scale;
     uiCtx.lineJoin = 'round';
     uiCtx.stroke();
 
     // Marca de la línea de meta
-    const finishM = worldToMinimap(FINISH_X, FINISH_Y);
     uiCtx.fillStyle = '#4cc9f0';
     uiCtx.beginPath();
-    uiCtx.arc(finishM.x, finishM.y, 3, 0, Math.PI * 2);
+    uiCtx.arc(FINISH_X, FINISH_Y, 3 / scale, 0, Math.PI * 2);
     uiCtx.fill();
 
     // Marcas de los 3 checkpoints
     CHECKPOINTS.forEach((cp, i) => {
-      const m = worldToMinimap(cp.x, cp.y);
-      uiCtx.fillStyle = checkpointsPassed[i] ? '#57cc99' : 'rgba(255,255,255,0.5)';
+      uiCtx.fillStyle = checkpointsPassed[i] ? '#57cc99' : 'rgba(255,255,255,0.4)';
       uiCtx.beginPath();
-      uiCtx.arc(m.x, m.y, 2.5, 0, Math.PI * 2);
+      uiCtx.arc(cp.x, cp.y, 2.5 / scale, 0, Math.PI * 2);
       uiCtx.fill();
     });
 
-    // Punto brillante del coche
-    const carM = worldToMinimap(car.x, car.y);
-    uiCtx.shadowColor = '#ff3b30';
-    uiCtx.shadowBlur = 10;
-    uiCtx.fillStyle = '#ff3b30';
+    uiCtx.restore(); // Termina la transformación del terreno
+
+    // --- Icono del coche fijo en el centro, apuntando hacia arriba ---
+    uiCtx.save();
+    uiCtx.translate(cx, cy);
+    
+    // Silueta de flecha/coche
     uiCtx.beginPath();
-    uiCtx.arc(carM.x, carM.y, 5, 0, Math.PI * 2);
+    uiCtx.moveTo(0, -7);
+    uiCtx.lineTo(5, 5);
+    uiCtx.lineTo(0, 3);
+    uiCtx.lineTo(-5, 5);
+    uiCtx.closePath();
+
+    uiCtx.fillStyle = '#ff3b30';
+    uiCtx.shadowColor = '#ff3b30';
+    uiCtx.shadowBlur = 8;
     uiCtx.fill();
+    uiCtx.strokeStyle = '#fff';
+    uiCtx.lineWidth = 1;
+    uiCtx.stroke();
 
     uiCtx.restore();
   }
 
   function draw() {
-    // Clear both canvases
-    trackCtx.clearRect(0, 0, trackCanvas.width, trackCanvas.height);
-    uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+    // Limpiar usando coordenadas lógicas (afectado por dpr scale)
+    trackCtx.clearRect(0, 0, window.innerWidth * 2, window.innerHeight);
+    uiCtx.clearRect(0, 0, window.innerWidth, window.innerHeight);
 
     // --- Mundo 2.5D en trackCanvas ---
     trackCtx.save();
     
     // Anclaje de la perspectiva en trackCanvas: 
-    // Coincide con la posición del coche en el uiCanvas (mitad ancho, 80% alto)
-    const pivotX = trackCanvas.width / 2;
-    const pivotY = trackCanvas.height * 0.8;
+    // width es 200vw, por tanto su mitad coincide con window.innerWidth
+    const pivotX = window.innerWidth;
+    const pivotY = window.innerHeight * 0.8;
     
     trackCtx.translate(pivotX, pivotY);
     // Rotar para que el track siempre venga hacia nosotros (coche siempre apunta "arriba")
