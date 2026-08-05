@@ -12,18 +12,40 @@
     background: #111;
     touch-action: none;
   }
-  canvas {
-    display: block;
+  #skyBackground {
+    position: absolute;
+    top: 0; left: 0; width: 100vw; height: 100vh;
+    background: linear-gradient(to bottom, #4facfe 0%, #00f2fe 45%, #33532f 50%, #111 100%);
+    z-index: 0;
+  }
+  #trackCanvas {
+    position: absolute;
+    left: -50vw;
+    top: 0;
+    width: 200vw;
+    height: 100vh;
+    transform-origin: 50% 80%;
+    transform: perspective(600px) rotateX(60deg);
+    z-index: 1;
+  }
+  #uiCanvas {
+    position: absolute;
+    top: 0; left: 0; width: 100vw; height: 100vh;
+    z-index: 2;
     touch-action: none;
   }
 </style>
 </head>
 <body>
-<canvas id="gameCanvas"></canvas>
+<div id="skyBackground"></div>
+<canvas id="trackCanvas"></canvas>
+<canvas id="uiCanvas"></canvas>
 
 <script>
-  const canvas = document.getElementById('gameCanvas');
-  const ctx = canvas.getContext('2d');
+  const trackCanvas = document.getElementById('trackCanvas');
+  const trackCtx = trackCanvas.getContext('2d');
+  const uiCanvas = document.getElementById('uiCanvas');
+  const uiCtx = uiCanvas.getContext('2d');
 
   // Dimensiones del coche
   const carWidth = 40;
@@ -322,8 +344,10 @@
   // Ajustar el canvas al tamaño completo de la ventana (no afecta al coche,
   // que vive en coordenadas de mundo independientes de la pantalla)
   function resizeCanvas() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+    trackCanvas.width = window.innerWidth * 2;
+    trackCanvas.height = window.innerHeight;
+    uiCanvas.width = window.innerWidth;
+    uiCanvas.height = window.innerHeight;
   }
 
   // Posición firmada de un punto respecto a una referencia (con su propia
@@ -579,47 +603,47 @@
   // Dibuja las 3 zonas táctiles como recuadros semitransparentes con texto guía
   // (se dibuja en espacio de PANTALLA, no de mundo, así que no se ve afectado por la cámara)
   function drawTouchZones() {
-    const w = canvas.width;
-    const h = canvas.height;
+    const w = uiCanvas.width;
+    const h = uiCanvas.height;
 
-    ctx.save();
-    ctx.font = 'bold 20px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    uiCtx.save();
+    uiCtx.font = 'bold 20px sans-serif';
+    uiCtx.textAlign = 'center';
+    uiCtx.textBaseline = 'middle';
 
     // Zona "Gas": X > 70%, Y < 40% (esquina superior derecha)
     const accelX = w * ACCEL_ZONE_X_RATIO;
     const accelW = w - accelX;
     const accelH = h * ACCEL_ZONE_Y_RATIO;
-    ctx.fillStyle = 'rgba(76, 201, 240, 0.2)';
-    ctx.fillRect(accelX, 0, accelW, accelH);
-    ctx.strokeStyle = 'rgba(76, 201, 240, 0.6)';
-    ctx.strokeRect(accelX, 0, accelW, accelH);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-    ctx.fillText('Gas', accelX + accelW / 2, accelH / 2);
+    uiCtx.fillStyle = 'rgba(76, 201, 240, 0.2)';
+    uiCtx.fillRect(accelX, 0, accelW, accelH);
+    uiCtx.strokeStyle = 'rgba(76, 201, 240, 0.6)';
+    uiCtx.strokeRect(accelX, 0, accelW, accelH);
+    uiCtx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+    uiCtx.fillText('Gas', accelX + accelW / 2, accelH / 2);
 
     // Zona "Girar Izq": X < 50%, alto completo
     const leftW = w * TURN_ZONE_X_RATIO;
-    ctx.fillStyle = 'rgba(247, 127, 0, 0.15)';
-    ctx.fillRect(0, 0, leftW, h);
-    ctx.strokeStyle = 'rgba(247, 127, 0, 0.5)';
-    ctx.strokeRect(0, 0, leftW, h);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-    ctx.fillText('Girar Izq', leftW / 2, h / 2);
+    uiCtx.fillStyle = 'rgba(247, 127, 0, 0.15)';
+    uiCtx.fillRect(0, 0, leftW, h);
+    uiCtx.strokeStyle = 'rgba(247, 127, 0, 0.5)';
+    uiCtx.strokeRect(0, 0, leftW, h);
+    uiCtx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+    uiCtx.fillText('Girar Izq', leftW / 2, h / 2);
 
     // Zona "Girar Der": X > 50%, Y > 40%
     const rightX = w * TURN_ZONE_X_RATIO;
     const rightY = h * RIGHT_ZONE_Y_RATIO;
     const rightW = w - rightX;
     const rightH = h - rightY;
-    ctx.fillStyle = 'rgba(144, 190, 109, 0.15)';
-    ctx.fillRect(rightX, rightY, rightW, rightH);
-    ctx.strokeStyle = 'rgba(144, 190, 109, 0.5)';
-    ctx.strokeRect(rightX, rightY, rightW, rightH);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-    ctx.fillText('Girar Der', rightX + rightW / 2, rightY + rightH / 2);
+    uiCtx.fillStyle = 'rgba(144, 190, 109, 0.15)';
+    uiCtx.fillRect(rightX, rightY, rightW, rightH);
+    uiCtx.strokeStyle = 'rgba(144, 190, 109, 0.5)';
+    uiCtx.strokeRect(rightX, rightY, rightW, rightH);
+    uiCtx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+    uiCtx.fillText('Girar Der', rightX + rightW / 2, rightY + rightH / 2);
 
-    ctx.restore();
+    uiCtx.restore();
   }
 
   // Dibuja el coche: deportivo visto desde arriba (ruedas, carrocería,
@@ -633,97 +657,103 @@
     const halfW = w / 2;
     const halfH = h / 2;
 
-    ctx.save();
-    ctx.translate(car.x, car.y);
-    ctx.rotate(car.angle);
+    uiCtx.save();
+    // Position car fixed at the bottom center of the UI canvas
+    const carScreenX = uiCanvas.width / 2;
+    const carScreenY = uiCanvas.height * 0.8;
+    uiCtx.translate(carScreenX, carScreenY);
+    
+    // Slight visual steering based on input (purely aesthetic in 2.5D)
+    const touch = evaluateTouchControls();
+    let visualAngle = 0;
+    if (keyboardState.left || touch.left) visualAngle = -0.15;
+    if (keyboardState.right || touch.right) visualAngle = 0.15;
+    uiCtx.rotate(visualAngle);
 
     // --- Ruedas (negras, debajo de la carrocería) ---
     const wheelW = 7;
     const wheelH = 16;
-    ctx.fillStyle = '#0d0d0d';
-    ctx.fillRect(-halfW - wheelW / 2 + 3, -halfH + 6, wheelW, wheelH);          // delantera izq.
-    ctx.fillRect(halfW - wheelW / 2 - 3, -halfH + 6, wheelW, wheelH);           // delantera der.
-    ctx.fillRect(-halfW - wheelW / 2 + 3, halfH - wheelH - 8, wheelW, wheelH);  // trasera izq.
-    ctx.fillRect(halfW - wheelW / 2 - 3, halfH - wheelH - 8, wheelW, wheelH);   // trasera der.
+    uiCtx.fillStyle = '#0d0d0d';
+    uiCtx.fillRect(-halfW - wheelW / 2 + 3, -halfH + 6, wheelW, wheelH);          // delantera izq.
+    uiCtx.fillRect(halfW - wheelW / 2 - 3, -halfH + 6, wheelW, wheelH);           // delantera der.
+    uiCtx.fillRect(-halfW - wheelW / 2 + 3, halfH - wheelH - 8, wheelW, wheelH);  // trasera izq.
+    uiCtx.fillRect(halfW - wheelW / 2 - 3, halfH - wheelH - 8, wheelW, wheelH);   // trasera der.
 
     // --- Alerón trasero ---
-    ctx.fillStyle = '#0a0a0a';
-    ctx.fillRect(-halfW + 6, halfH - 11, 4, 8);   // soporte izq.
-    ctx.fillRect(halfW - 10, halfH - 11, 4, 8);   // soporte der.
-    ctx.fillRect(-halfW + 1, halfH - 6, w - 2, 5); // ala del alerón
+    uiCtx.fillStyle = '#0a0a0a';
+    uiCtx.fillRect(-halfW + 6, halfH - 11, 4, 8);   // soporte izq.
+    uiCtx.fillRect(halfW - 10, halfH - 11, 4, 8);   // soporte der.
+    uiCtx.fillRect(-halfW + 1, halfH - 6, w - 2, 5); // ala del alerón
 
     // --- Carrocería (rectángulo con esquinas redondeadas) ---
     const r = 9;
-    ctx.beginPath();
-    ctx.moveTo(-halfW + r, -halfH);
-    ctx.lineTo(halfW - r, -halfH);
-    ctx.quadraticCurveTo(halfW, -halfH, halfW, -halfH + r);
-    ctx.lineTo(halfW, halfH - r);
-    ctx.quadraticCurveTo(halfW, halfH, halfW - r, halfH);
-    ctx.lineTo(-halfW + r, halfH);
-    ctx.quadraticCurveTo(-halfW, halfH, -halfW, halfH - r);
-    ctx.lineTo(-halfW, -halfH + r);
-    ctx.quadraticCurveTo(-halfW, -halfH, -halfW + r, -halfH);
-    ctx.closePath();
+    uiCtx.beginPath();
+    uiCtx.moveTo(-halfW + r, -halfH);
+    uiCtx.lineTo(halfW - r, -halfH);
+    uiCtx.quadraticCurveTo(halfW, -halfH, halfW, -halfH + r);
+    uiCtx.lineTo(halfW, halfH - r);
+    uiCtx.quadraticCurveTo(halfW, halfH, halfW - r, halfH);
+    uiCtx.lineTo(-halfW + r, halfH);
+    uiCtx.quadraticCurveTo(-halfW, halfH, -halfW, halfH - r);
+    uiCtx.lineTo(-halfW, -halfH + r);
+    uiCtx.quadraticCurveTo(-halfW, -halfH, -halfW + r, -halfH);
+    uiCtx.closePath();
 
-    const bodyGradient = ctx.createLinearGradient(0, -halfH, 0, halfH);
+    const bodyGradient = uiCtx.createLinearGradient(0, -halfH, 0, halfH);
     bodyGradient.addColorStop(0, '#ff4d5e');
     bodyGradient.addColorStop(1, '#c1121f');
-    ctx.fillStyle = bodyGradient;
-    ctx.fill();
-    ctx.strokeStyle = '#7a0a12';
-    ctx.lineWidth = 2;
-    ctx.stroke();
+    uiCtx.fillStyle = bodyGradient;
+    uiCtx.fill();
+    uiCtx.strokeStyle = '#7a0a12';
+    uiCtx.lineWidth = 2;
+    uiCtx.stroke();
 
     // --- Franja central deportiva ---
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
-    ctx.fillRect(-3, -halfH + 5, 6, h - 10);
+    uiCtx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+    uiCtx.fillRect(-3, -halfH + 5, 6, h - 10);
 
     // --- Parabrisas (trapecio cerca del frente, frente = -y) ---
-    ctx.beginPath();
-    ctx.moveTo(-halfW * 0.55, -halfH * 0.6);
-    ctx.lineTo(halfW * 0.55, -halfH * 0.6);
-    ctx.lineTo(halfW * 0.35, -halfH * 0.1);
-    ctx.lineTo(-halfW * 0.35, -halfH * 0.1);
-    ctx.closePath();
-    ctx.fillStyle = 'rgba(140, 205, 230, 0.85)';
-    ctx.fill();
-    ctx.strokeStyle = '#2b2b2b';
-    ctx.lineWidth = 1;
-    ctx.stroke();
+    uiCtx.beginPath();
+    uiCtx.moveTo(-halfW * 0.55, -halfH * 0.6);
+    uiCtx.lineTo(halfW * 0.55, -halfH * 0.6);
+    uiCtx.lineTo(halfW * 0.35, -halfH * 0.1);
+    uiCtx.lineTo(-halfW * 0.35, -halfH * 0.1);
+    uiCtx.closePath();
+    uiCtx.fillStyle = 'rgba(140, 205, 230, 0.85)';
+    uiCtx.fill();
+    uiCtx.strokeStyle = '#2b2b2b';
+    uiCtx.lineWidth = 1;
+    uiCtx.stroke();
 
     // --- Faros delanteros ---
-    ctx.fillStyle = '#fff3b0';
-    ctx.beginPath();
-    ctx.arc(-halfW * 0.6, -halfH + 4, 2.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(halfW * 0.6, -halfH + 4, 2.5, 0, Math.PI * 2);
-    ctx.fill();
+    uiCtx.fillStyle = '#fff3b0';
+    uiCtx.beginPath();
+    uiCtx.arc(-halfW * 0.6, -halfH + 4, 2.5, 0, Math.PI * 2);
+    uiCtx.fill();
+    uiCtx.beginPath();
+    uiCtx.arc(halfW * 0.6, -halfH + 4, 2.5, 0, Math.PI * 2);
+    uiCtx.fill();
 
-    ctx.restore();
+    uiCtx.restore();
   }
 
   // Dibuja el terreno exterior (arena/hierba) que rodea el asfalto, en
   // coordenadas de MUNDO, cubriendo únicamente la zona visible según la
   // cámara actual (con margen), para que se desplace de forma natural
   // junto con el circuito.
-  function drawGround(offsetX, offsetY) {
-    const viewLeft = -offsetX - 200;
-    const viewTop = -offsetY - 200;
-    const viewRight = canvas.width - offsetX + 200;
-    const viewBottom = canvas.height - offsetY + 200;
+  function drawGround() {
+    // In 2.5D we just draw a huge rect around the camera origin
+    const size = 20000;
+    
+    trackCtx.fillStyle = '#33532f';
+    trackCtx.fillRect(car.x - size/2, car.y - size/2, size, size);
 
-    ctx.fillStyle = '#33532f';
-    ctx.fillRect(viewLeft, viewTop, viewRight - viewLeft, viewBottom - viewTop);
-
-    // Rayas de césped cortado (tono muy sutil), ancladas al mundo para dar
-    // sensación de movimiento real al circular por la arena/hierba.
+    // Rayas de césped cortado (tono muy sutil)
     const stripeWidth = 160;
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.035)';
-    const startStripe = Math.floor(viewLeft / stripeWidth) * stripeWidth;
-    for (let sx = startStripe; sx < viewRight; sx += stripeWidth * 2) {
-      ctx.fillRect(sx, viewTop, stripeWidth, viewBottom - viewTop);
+    trackCtx.fillStyle = 'rgba(255, 255, 255, 0.035)';
+    const startStripe = Math.floor((car.x - size/2) / stripeWidth) * stripeWidth;
+    for (let sx = startStripe; sx < car.x + size/2; sx += stripeWidth * 2) {
+      trackCtx.fillRect(sx, car.y - size/2, stripeWidth, size);
     }
   }
 
@@ -733,29 +763,28 @@
     const curbExtra = 14; // cuánto sobresale el piano a cada lado del asfalto
     const dash = 90;      // longitud de cada segmento rojo/blanco del piano
 
-    // 1) Capa de pianos: se traza MÁS ANCHA que el asfalto, con un patrón
-    //    de guiones blanco/rojo alternados a lo largo de todo el trazado.
-    ctx.save();
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.lineWidth = TRACK_WIDTH + curbExtra * 2;
-    ctx.setLineDash([dash, dash]);
-    ctx.lineDashOffset = 0;
-    ctx.strokeStyle = '#f1f1f1';
-    ctx.stroke(trackPath);
-    ctx.lineDashOffset = dash;
-    ctx.strokeStyle = '#e63946';
-    ctx.stroke(trackPath);
-    ctx.restore();
+    // 1) Capa de pianos
+    trackCtx.save();
+    trackCtx.lineJoin = 'round';
+    trackCtx.lineCap = 'round';
+    trackCtx.lineWidth = TRACK_WIDTH + curbExtra * 2;
+    trackCtx.setLineDash([dash, dash]);
+    trackCtx.lineDashOffset = 0;
+    trackCtx.strokeStyle = '#f1f1f1';
+    trackCtx.stroke(trackPath);
+    trackCtx.lineDashOffset = dash;
+    trackCtx.strokeStyle = '#e63946';
+    trackCtx.stroke(trackPath);
+    trackCtx.restore();
 
-    // 2) Asfalto por encima, más estrecho: solo deja ver el piano en los bordes
-    ctx.save();
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.lineWidth = TRACK_WIDTH;
-    ctx.strokeStyle = '#3d3d3d';
-    ctx.stroke(trackPath);
-    ctx.restore();
+    // 2) Asfalto por encima
+    trackCtx.save();
+    trackCtx.lineJoin = 'round';
+    trackCtx.lineCap = 'round';
+    trackCtx.lineWidth = TRACK_WIDTH;
+    trackCtx.strokeStyle = '#3d3d3d';
+    trackCtx.stroke(trackPath);
+    trackCtx.restore();
 
     // 3) Línea de meta a cuadros, sobre la primera recta
     drawFinishLine();
@@ -773,19 +802,19 @@
     const cellW = TRACK_WIDTH / cols;
     const cellH = lineDepth / rows;
 
-    ctx.save();
-    ctx.translate(FINISH_X, FINISH_Y);
-    ctx.rotate(START_ANGLE);
+    trackCtx.save();
+    trackCtx.translate(FINISH_X, FINISH_Y);
+    trackCtx.rotate(START_ANGLE);
 
     for (let row = 0; row < rows; row++) {
       for (let col = 0; col < cols; col++) {
         const isBlack = (row + col) % 2 === 0;
-        ctx.fillStyle = isBlack ? '#111111' : '#f5f5f5';
-        ctx.fillRect(-TRACK_WIDTH / 2 + col * cellW, -lineDepth / 2 + row * cellH, cellW, cellH);
+        trackCtx.fillStyle = isBlack ? '#111111' : '#f5f5f5';
+        trackCtx.fillRect(-TRACK_WIDTH / 2 + col * cellW, -lineDepth / 2 + row * cellH, cellW, cellH);
       }
     }
 
-    ctx.restore();
+    trackCtx.restore();
   }
 
   // Convierte segundos -> "MM:SS.d"
@@ -823,27 +852,26 @@
       'Superficie: ' + (isCarOffTrack ? 'Arena/Hierba' : 'Asfalto')
     ];
 
-    ctx.save();
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-    ctx.fillRect(HUD_MARGIN, HUD_MARGIN, HUD_BOX_WIDTH, HUD_BOX_HEIGHT);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
-    ctx.strokeRect(HUD_MARGIN, HUD_MARGIN, HUD_BOX_WIDTH, HUD_BOX_HEIGHT);
+    uiCtx.save();
+    uiCtx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+    uiCtx.fillRect(HUD_MARGIN, HUD_MARGIN, HUD_BOX_WIDTH, HUD_BOX_HEIGHT);
+    uiCtx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+    uiCtx.strokeRect(HUD_MARGIN, HUD_MARGIN, HUD_BOX_WIDTH, HUD_BOX_HEIGHT);
 
-    ctx.font = 'bold 16px sans-serif';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
+    uiCtx.font = 'bold 16px sans-serif';
+    uiCtx.textAlign = 'left';
+    uiCtx.textBaseline = 'middle';
 
     lines.forEach((line, i) => {
-      // La línea de superficie cambia de color según si está en arena o asfalto
       if (i === 5) {
-        ctx.fillStyle = isCarOffTrack ? '#e0c341' : '#8fd694';
+        uiCtx.fillStyle = isCarOffTrack ? '#e0c341' : '#8fd694';
       } else {
-        ctx.fillStyle = '#f1f1f1';
+        uiCtx.fillStyle = '#f1f1f1';
       }
-      ctx.fillText(line, HUD_MARGIN + HUD_PADDING_X, HUD_MARGIN + HUD_PADDING_Y + HUD_LINE_HEIGHT * i + HUD_LINE_HEIGHT / 2);
+      uiCtx.fillText(line, HUD_MARGIN + HUD_PADDING_X, HUD_MARGIN + HUD_PADDING_Y + HUD_LINE_HEIGHT * i + HUD_LINE_HEIGHT / 2);
     });
 
-    ctx.restore();
+    uiCtx.restore();
   }
 
   // Minimapa (radar): recuadro semitransparente en la esquina superior
@@ -858,18 +886,18 @@
     const boxX = HUD_MARGIN;
     const boxY = HUD_MARGIN + HUD_BOX_HEIGHT + MINIMAP_GAP_BELOW_HUD;
 
-    ctx.save();
+    uiCtx.save();
 
     // Fondo semitransparente del recuadro
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-    ctx.fillRect(boxX, boxY, MINIMAP_SIZE, MINIMAP_SIZE);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-    ctx.strokeRect(boxX, boxY, MINIMAP_SIZE, MINIMAP_SIZE);
+    uiCtx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+    uiCtx.fillRect(boxX, boxY, MINIMAP_SIZE, MINIMAP_SIZE);
+    uiCtx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+    uiCtx.strokeRect(boxX, boxY, MINIMAP_SIZE, MINIMAP_SIZE);
 
     // Recorta el resto del dibujo al recuadro
-    ctx.beginPath();
-    ctx.rect(boxX, boxY, MINIMAP_SIZE, MINIMAP_SIZE);
-    ctx.clip();
+    uiCtx.beginPath();
+    uiCtx.rect(boxX, boxY, MINIMAP_SIZE, MINIMAP_SIZE);
+    uiCtx.clip();
 
     const trackW = trackBounds.maxX - trackBounds.minX;
     const trackH = trackBounds.maxY - trackBounds.minY;
@@ -886,68 +914,75 @@
       };
     }
 
-    // Trazado completo simplificado (misma forma exacta que el circuito real)
-    ctx.beginPath();
+    // Trazado completo simplificado
+    uiCtx.beginPath();
     trackPoints.forEach((p, i) => {
       const m = worldToMinimap(p.x, p.y);
-      if (i === 0) ctx.moveTo(m.x, m.y);
-      else ctx.lineTo(m.x, m.y);
+      if (i === 0) uiCtx.moveTo(m.x, m.y);
+      else uiCtx.lineTo(m.x, m.y);
     });
-    ctx.strokeStyle = '#e0e0e0';
-    ctx.lineWidth = 3;
-    ctx.lineJoin = 'round';
-    ctx.stroke();
+    uiCtx.strokeStyle = '#e0e0e0';
+    uiCtx.lineWidth = 3;
+    uiCtx.lineJoin = 'round';
+    uiCtx.stroke();
 
     // Marca de la línea de meta
     const finishM = worldToMinimap(FINISH_X, FINISH_Y);
-    ctx.fillStyle = '#4cc9f0';
-    ctx.beginPath();
-    ctx.arc(finishM.x, finishM.y, 3, 0, Math.PI * 2);
-    ctx.fill();
+    uiCtx.fillStyle = '#4cc9f0';
+    uiCtx.beginPath();
+    uiCtx.arc(finishM.x, finishM.y, 3, 0, Math.PI * 2);
+    uiCtx.fill();
 
-    // Marcas de los 3 checkpoints (verde si superado, gris si pendiente)
+    // Marcas de los 3 checkpoints
     CHECKPOINTS.forEach((cp, i) => {
       const m = worldToMinimap(cp.x, cp.y);
-      ctx.fillStyle = checkpointsPassed[i] ? '#57cc99' : 'rgba(255,255,255,0.5)';
-      ctx.beginPath();
-      ctx.arc(m.x, m.y, 2.5, 0, Math.PI * 2);
-      ctx.fill();
+      uiCtx.fillStyle = checkpointsPassed[i] ? '#57cc99' : 'rgba(255,255,255,0.5)';
+      uiCtx.beginPath();
+      uiCtx.arc(m.x, m.y, 2.5, 0, Math.PI * 2);
+      uiCtx.fill();
     });
 
-    // Punto brillante del coche (posición en tiempo real)
+    // Punto brillante del coche
     const carM = worldToMinimap(car.x, car.y);
-    ctx.shadowColor = '#ff3b30';
-    ctx.shadowBlur = 10;
-    ctx.fillStyle = '#ff3b30';
-    ctx.beginPath();
-    ctx.arc(carM.x, carM.y, 5, 0, Math.PI * 2);
-    ctx.fill();
+    uiCtx.shadowColor = '#ff3b30';
+    uiCtx.shadowBlur = 10;
+    uiCtx.fillStyle = '#ff3b30';
+    uiCtx.beginPath();
+    uiCtx.arc(carM.x, carM.y, 5, 0, Math.PI * 2);
+    uiCtx.fill();
 
-    ctx.restore();
+    uiCtx.restore();
   }
 
-  // Dibuja fondo, terreno, circuito (con cámara F1 que sigue al coche),
-  // zonas táctiles, minimapa y HUD.
   function draw() {
-    // Fondo oscuro de respaldo (por si algún borde queda sin cubrir)
-    ctx.fillStyle = '#111';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // Clear both canvases
+    trackCtx.clearRect(0, 0, trackCanvas.width, trackCanvas.height);
+    uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
 
-    // --- Mundo (terreno + circuito + coche), desplazado según la cámara ---
-    const offsetX = canvas.width / 2 - camera.x;
-    const offsetY = canvas.height / 2 - camera.y;
-
-    ctx.save();
-    ctx.translate(offsetX, offsetY);
-    drawGround(offsetX, offsetY);
+    // --- Mundo 2.5D en trackCanvas ---
+    trackCtx.save();
+    
+    // Anclaje de la perspectiva en trackCanvas: 
+    // Coincide con la posición del coche en el uiCanvas (mitad ancho, 80% alto)
+    const pivotX = trackCanvas.width / 2;
+    const pivotY = trackCanvas.height * 0.8;
+    
+    trackCtx.translate(pivotX, pivotY);
+    // Rotar para que el track siempre venga hacia nosotros (coche siempre apunta "arriba")
+    trackCtx.rotate(-car.angle);
+    // Trasladar el mundo para que el coche esté en 0,0 localmente
+    trackCtx.translate(-car.x, -car.y);
+    
+    drawGround();
     drawTrack();
-    drawCar();
-    ctx.restore();
+    
+    trackCtx.restore();
 
-    // --- Pantalla (HUD, minimapa y zonas táctiles), sin transformar ---
+    // --- UI y Coche en uiCanvas ---
     drawTouchZones();
     drawMinimap();
     drawHUD();
+    drawCar();
   }
 
   // Bucle principal del juego
@@ -1001,28 +1036,28 @@
     activeTouches = activeTouches.filter(t => t.identifier !== touch.identifier);
   }
 
-  canvas.addEventListener('touchstart', (e) => {
+  window.addEventListener('touchstart', (e) => {
     e.preventDefault();
     for (const touch of e.changedTouches) {
       upsertTouch(touch);
     }
   }, { passive: false });
 
-  canvas.addEventListener('touchmove', (e) => {
+  window.addEventListener('touchmove', (e) => {
     e.preventDefault();
     for (const touch of e.changedTouches) {
       upsertTouch(touch);
     }
   }, { passive: false });
 
-  canvas.addEventListener('touchend', (e) => {
+  window.addEventListener('touchend', (e) => {
     e.preventDefault();
     for (const touch of e.changedTouches) {
       removeTouch(touch);
     }
   }, { passive: false });
 
-  canvas.addEventListener('touchcancel', (e) => {
+  window.addEventListener('touchcancel', (e) => {
     e.preventDefault();
     for (const touch of e.changedTouches) {
       removeTouch(touch);
